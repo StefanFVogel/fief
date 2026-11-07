@@ -76,6 +76,7 @@ ignore_missing_imports = true
 
 [tool.ruff]
 target-version = "py311"
+extend-exclude = ["standards"]
 
 [tool.ruff.lint]
 extend-select = ["I", "TRY", "UP"]
@@ -90,6 +91,9 @@ omit = ["fief/alembic/*"]
 addopts = "-n auto --cov fief/ --cov-report=term-missing"
 markers = ["test_data", "access_token", "authenticated_admin", "htmx"]
 asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
 
 [tool.hatch]
 
@@ -127,14 +131,14 @@ dependencies = [
   "gevent",
   "httpx",
   "libcst",
-  "mypy",
-  "pytest",
+  "mypy>=1.15,<1.16",
+  "pytest>=9.0.3",
   "pytest-cov",
-  "pytest-asyncio>=0.21,<0.22",
+  "pytest-asyncio>=1.3,<2",
   "pytest-mock",
   "pytest-xdist",
   "respx",
-  "ruff",
+  "ruff>=0.14,<0.15",
   "types-python-slugify",
   "types-pytz",
 ]
