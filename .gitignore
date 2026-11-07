@@ -121,3 +121,40 @@ node_modules/
 # Generated files
 fief/static/*.js
 fief/static/*.css
+
+# Claude Code files from standards submodule (restored via: python standards/scripts/maintain_tools.py --setup)
+.claude/commands/apply-review.md
+.claude/commands/changes.md
+.claude/commands/code-review.md
+.claude/commands/manual-review.md
+.claude/commands/project-check.md
+.claude/commands/review-fix.md
+.claude/commands/skill-review.md
+.claude/commands/status.md
+.claude/commands/wiki-init.md
+.claude/agents/quality-gate.md
+.claude/agents/test-runner.md
+.claude/hooks/_hook_utils.py
+.claude/hooks/commit_guard.py
+.claude/hooks/safety_guard.py
+.claude/hooks/stop_guard.py
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks.log
+.claude/context.md
+.claude/.standards-version
+.claude/project_migration.yaml
+.claude/cache/
+.eslintrc.json
+wiki/logs
+wiki/logs.migrating.*
+# Rules from standards submodule
+.claude/rules/
+# Skills from standards submodule (not projekt/)
+.claude/skills/analyze/
+.claude/skills/backend/
+.claude/skills/frontend/
+.claude/skills/requesting-code-review/
+.claude/skills/styles/
+.claude/skills/ticket/
+.claude/skills/graphify/
