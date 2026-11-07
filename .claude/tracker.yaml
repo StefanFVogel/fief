@@ -1,0 +1,23 @@
+# Issue Tracker Configuration — fief-Fork
+# Vorlage: standards/skills/ticket/assets/tracker.yaml.template
+# Auth: GITHUB_TOKEN env var, z. B. GITHUB_TOKEN=$(gh auth token) — keinen Token in diese Datei schreiben.
+
+tracker: github
+
+github:
+  owner: StefanFVogel
+  repo: fief
+
+# GitHub kennt nur open/closed. todo und start bleiben "open", close schließt das Issue.
+status_mapping:
+  todo: open
+  start: open
+  close: closed
+
+# Follow-Ups werden als GitHub-Sub-Issue unter dem Parent-Issue eingehängt.
+follow_up_link: sub-issue
+
+status_dashboard:
+  project_keys: ["StefanFVogel/fief"]
+  me_username: "StefanFVogel"
+  branch_id_pattern: "-(\\d+)-"
