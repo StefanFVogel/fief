@@ -29,7 +29,8 @@ sentry_sdk.init(
 
 app = FastAPI(lifespan=lifespan, openapi_url=None)
 
-app.add_middleware(SentryAsgiMiddleware)
+# Starlette 1.x _MiddlewareFactory typing rejects SentryAsgiMiddleware
+app.add_middleware(SentryAsgiMiddleware)  # type: ignore[arg-type]
 app.add_middleware(
     XForwardedHostMiddleware,
     trusted_hosts=environ.get("FORWARDED_ALLOW_IPS", "127.0.0.1"),

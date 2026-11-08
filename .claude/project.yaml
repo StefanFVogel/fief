@@ -1,0 +1,16 @@
+# fief-Fork — bestätigt 2026-11-07. Siehe standards/MIGRATION.md und CLAUDE.md
+# (Abschnitt "fief-Fork: Abweichungen vom Standard").
+confirmed: true
+trunk: main
+promotion_chain: [main]
+branch_prefixes: [feature/, bugfix/, hotfix/, vk/]
+repo_guard: false                  # guard.yml braucht Zugriff auf das private dev-standards-Repo
+stack:
+  frontend: none                   # fief: Jinja + Tailwind/Sass via rollup, kein jQuery/Bootstrap
+  js_root: js
+  sql_dialect: none                # fief: SQLAlchemy/Alembic (PostgreSQL, SQLite), kein T-SQL
+  templates: none                  # fief-Templates nicht mit djLint umformatieren
+  kubernetes: none
+  node_project: true               # package.json/package-lock.json gehören zu fiefs Frontend-Build
+preflight:
+  doc_paths: []

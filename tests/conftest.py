@@ -1,4 +1,3 @@
-import asyncio
 import contextlib
 import json
 import secrets
@@ -35,14 +34,6 @@ from tests.data import ModelMapping, TestData, data_mapping, session_token_token
 from tests.types import GetTestDatabase, HTTPClientGeneratorType, TenantParams
 
 pytest.register_assert_rewrite("tests.helpers")
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Force the pytest-asyncio loop to be the main one."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest.fixture(scope="session", autouse=True)

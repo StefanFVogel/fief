@@ -76,6 +76,7 @@ ignore_missing_imports = true
 
 [tool.ruff]
 target-version = "py311"
+extend-exclude = ["standards"]
 
 [tool.ruff.lint]
 extend-select = ["I", "TRY", "UP"]
@@ -90,6 +91,9 @@ omit = ["fief/alembic/*"]
 addopts = "-n auto --cov fief/ --cov-report=term-missing"
 markers = ["test_data", "access_token", "authenticated_admin", "htmx"]
 asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
 
 [tool.hatch]
 
@@ -127,14 +131,14 @@ dependencies = [
   "gevent",
   "httpx",
   "libcst",
-  "mypy",
-  "pytest",
+  "mypy>=1.15,<1.16",
+  "pytest>=9.0.3",
   "pytest-cov",
-  "pytest-asyncio>=0.21,<0.22",
+  "pytest-asyncio>=1.3,<2",
   "pytest-mock",
   "pytest-xdist",
   "respx",
-  "ruff",
+  "ruff>=0.14,<0.15",
   "types-python-slugify",
   "types-pytz",
 ]
@@ -213,7 +217,7 @@ classifiers = [
 dynamic = ["version"]
 requires-python = ">=3.12"
 dependencies = [
-    "aiomysql ==0.2.0",
+    "aiomysql ==0.3.2",
     "aiosqlite ==0.20.0",
     "alembic ==1.14.0",
     "apscheduler ==3.10.4",
@@ -222,19 +226,19 @@ dependencies = [
     "asyncpg ==0.30.0",
     "dramatiq[redis] ==1.17.1",
     "email_validator ==2.2.0",
-    "fastapi ==0.115.4",
+    "fastapi ==0.162.2",
     "fief-client ==0.20.0",
     "furl ==2.1.3",
     "httpx-oauth ==0.15.1",
     "itsdangerous ==2.2.0",
-    "Jinja2 ==3.1.4",
-    "jwcrypto ==1.5.6",
+    "Jinja2 ==3.1.6",
+    "jwcrypto ==1.6.1",
     "loguru ==0.7.2",
     "phonenumbers >=8.12.48,<8.14",
     "posthog >=3.0.1,<4",
     "postmarker ==1.0",
     "pydantic ==2.9.2",
-    "python-multipart ==0.0.17",
+    "python-multipart ==0.0.33",
     "pydantic-settings ==2.6.1",
     "pwdlib[argon2,bcrypt] ==0.2.1",
     "sendgrid ==6.11.0",
@@ -247,6 +251,7 @@ dependencies = [
     "sentry-sdk ==2.18.0",
     "sqlalchemy[mypy] ==2.0.36",
     "sqlalchemy-utils ==0.41.2",
+    "starlette >=1.3.1,<2",
     "typer ==0.12.5",
     "uvicorn[standard]==0.32.0",
     "WTForms==3.2.1",
