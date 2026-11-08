@@ -1,7 +1,9 @@
+import re
 from datetime import UTC, datetime
 from typing import TypedDict
 
 from fastapi import Cookie, Depends, HTTPException, Query, Request, Response, status
+from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 
 from fief.dependencies.authentication_flow import get_authentication_flow
 from fief.dependencies.branding import get_show_branding
@@ -13,11 +15,17 @@ from fief.exceptions import (
     AuthorizeException,
     AuthorizeRedirectException,
     LoginException,
+    LogoutException,
 )
 from fief.locale import gettext_lazy as _
 from fief.models import Client, LoginSession, SessionToken, Tenant, Theme
 from fief.repositories import ClientRepository, GrantRepository, LoginSessionRepository
-from fief.schemas.auth import AuthorizeError, AuthorizeRedirectError, LoginError
+from fief.schemas.auth import (
+    AuthorizeError,
+    AuthorizeRedirectError,
+    LoginError,
+    LogoutError,
+)
 from fief.services.acr import ACR
 from fief.services.authentication_flow import AuthenticationFlow
 from fief.services.response_type import (
@@ -26,6 +34,11 @@ from fief.services.response_type import (
     NONCE_REQUIRED_RESPONSE_TYPES,
 )
 from fief.settings import settings
+
+# URL parsers silently strip or rewrite these, the same way browsers do
+UNSAFE_URL_CHARACTERS = re.compile(r"[\x00-\x20\x7f\\]")
+
+http_url_adapter = TypeAdapter(AnyHttpUrl)
 
 
 async def get_authorize_client(
@@ -63,6 +76,50 @@ async def get_authorize_redirect_uri(
         )
 
     return redirect_uri
+
+
+def _get_allowed_logout_url(redirect_uri: str, scheme: str) -> str | None:
+    if UNSAFE_URL_CHARACTERS.search(redirect_uri):
+        return None
+
+    try:
+        url = http_url_adapter.validate_python(redirect_uri)
+        own_url = http_url_adapter.validate_python(f"{scheme}://{settings.fief_domain}")
+    except ValidationError:
+        return None
+
+    if url.username is not None or url.password is not None:
+        return None
+
+    allowed_urls = [own_url, *settings.logout_allowed_origins]
+    if (url.scheme, url.host, url.port) not in [
+        (allowed.scheme, allowed.host, allowed.port) for allowed in allowed_urls
+    ]:
+        return None
+
+    # Return the serialized URL we just checked, not the raw input
+    return str(url)
+
+
+async def get_logout_redirect_uri(
+    request: Request,
+    redirect_uri: str | None = Query(None),
+    tenant: Tenant = Depends(get_current_tenant),
+) -> str:
+    if redirect_uri is None:
+        raise LogoutException(
+            LogoutError.get_invalid_request(_("redirect_uri is missing")),
+            tenant,
+        )
+
+    allowed_url = _get_allowed_logout_url(redirect_uri, request.url.scheme)
+    if allowed_url is None:
+        raise LogoutException(
+            LogoutError.get_invalid_request(_("redirect_uri is not authorized")),
+            tenant,
+        )
+
+    return allowed_url
 
 
 async def get_authorize_state(state: str | None = Query(None)) -> str | None:

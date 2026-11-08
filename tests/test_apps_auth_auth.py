@@ -5,6 +5,7 @@ import httpx
 import pytest
 from bs4 import BeautifulSoup
 from fastapi import status
+from pydantic import AnyHttpUrl, TypeAdapter
 
 from fief.crypto.token import get_token_hash
 from fief.db import AsyncSession
@@ -1375,6 +1376,15 @@ class TestAuthPostConsent:
         assert used_login_session is None
 
 
+@pytest.fixture
+def allowed_logout_origin(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        settings,
+        "logout_allowed_origins",
+        [TypeAdapter(AnyHttpUrl).validate_python("https://www.bretagne.duchy")],
+    )
+
+
 @pytest.mark.asyncio
 class TestAuthLogout:
     async def test_missing_redirect_uri(
@@ -1396,7 +1406,160 @@ class TestAuthLogout:
         headers = response.headers
         assert headers["X-Fief-Error"] == "invalid_request"
 
+    @pytest.mark.parametrize(
+        "redirect_uri",
+        [
+            pytest.param("https://evil.example/", id="foreign domain"),
+            pytest.param("//evil.example", id="scheme-relative"),
+            pytest.param("https://evil.example@www.bretagne.duchy/", id="userinfo"),
+            pytest.param("https://user:pw@www.bretagne.duchy/", id="password"),
+            pytest.param("https://www.bretagne.duchy@evil.example/", id="host as user"),
+            pytest.param(
+                "https://www.bretagne.duchy%2F@evil.example/", id="encoded userinfo"
+            ),
+            pytest.param("https://www.bretagne.duchy.evil.example/", id="suffix"),
+            pytest.param("https://evilwww.bretagne.duchy/", id="prefix"),
+            pytest.param("https://www.bretagne.duchy./", id="trailing dot"),
+            pytest.param("javascript:alert(1)", id="javascript"),
+            pytest.param("data:text/html,x", id="data"),
+            pytest.param("http://www.bretagne.duchy/", id="other scheme"),
+            pytest.param("ftp://www.bretagne.duchy/", id="ftp"),
+            pytest.param("https://www.bretagne.duchy:8443/", id="other port"),
+            pytest.param("https:\\\\evil.example", id="backslashes foreign"),
+            pytest.param("https:\\\\www.bretagne.duchy/", id="backslashes allowed"),
+            pytest.param(
+                "https://www.bretagne.duchy\\@evil.example/", id="backslash at"
+            ),
+            pytest.param("/\\evil.example", id="slash backslash"),
+            pytest.param("\\\\evil.example", id="double backslash"),
+            pytest.param("https:evil.example", id="no slashes"),
+            pytest.param("https:/evil.example", id="one slash"),
+            pytest.param("https://evil\t.example/", id="tab foreign"),
+            pytest.param("https://www.bretagne\t.duchy/", id="tab allowed"),
+            pytest.param("ht\ttps://www.bretagne.duchy/", id="tab in scheme"),
+            pytest.param("/\t/evil.example", id="tab between slashes"),
+            pytest.param("https://www.bretagne.duchy/\nx", id="newline in path"),
+            pytest.param("https://www.bretagne.duchy/\r\nX-Evil: 1", id="crlf"),
+            pytest.param(" https://www.bretagne.duchy/", id="leading space"),
+            pytest.param("https://www.bretagne.duchy/\n", id="trailing newline"),
+            pytest.param(
+                "https://www.bretagne.duchy／.evil.example/", id="unicode slash"
+            ),
+            pytest.param("/admin/", id="relative path"),
+            pytest.param("admin/", id="relative without slash"),
+            pytest.param("?next=1", id="relative query"),
+            pytest.param("", id="empty"),
+        ],
+    )
+    @pytest.mark.usefixtures("allowed_logout_origin")
+    async def test_unauthorized_redirect_uri(
+        self,
+        redirect_uri: str,
+        test_client_auth: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        session_token = test_data["session_tokens"]["regular"]
+        tenant = session_token.user.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
+
+        cookies = {}
+        cookies[settings.session_cookie_name] = session_token_tokens["regular"][0]
+
+        response = await test_client_auth.get(
+            f"{path_prefix}/logout",
+            params={"redirect_uri": redirect_uri},
+            cookies=cookies,
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.headers["X-Fief-Error"] == "invalid_request"
+        assert "Location" not in response.headers
+        assert "Set-Cookie" not in response.headers
+
+        session_token_repository = SessionTokenRepository(main_session)
+        kept_session_token = await session_token_repository.get_by_token(
+            session_token_tokens["regular"][1]
+        )
+        assert kept_session_token is not None
+
+    @pytest.mark.parametrize(
+        "redirect_uri,location",
+        [
+            ("https://www.bretagne.duchy", "https://www.bretagne.duchy/"),
+            ("https://www.bretagne.duchy/", "https://www.bretagne.duchy/"),
+            ("https://www.bretagne.duchy:443/", "https://www.bretagne.duchy/"),
+            ("HTTPS://WWW.BRETAGNE.DUCHY/Path", "https://www.bretagne.duchy/Path"),
+            (
+                "https://www.bretagne.duchy/?error=forbidden&a=1#top",
+                "https://www.bretagne.duchy/?error=forbidden&a=1#top",
+            ),
+        ],
+    )
+    @pytest.mark.usefixtures("allowed_logout_origin")
+    async def test_allowed_origin_location_is_normalized(
+        self,
+        redirect_uri: str,
+        location: str,
+        test_client_auth: httpx.AsyncClient,
+        test_data: TestData,
+    ):
+        tenant = test_data["tenants"]["default"]
+        path_prefix = tenant.slug if not tenant.default else ""
+
+        response = await test_client_auth.get(
+            f"{path_prefix}/logout", params={"redirect_uri": redirect_uri}
+        )
+
+        assert response.status_code == status.HTTP_302_FOUND
+        assert response.headers["Location"] == location
+
+    async def test_no_allowed_origins_by_default(
+        self, test_client_auth: httpx.AsyncClient
+    ):
+        assert settings.logout_allowed_origins == []
+
+        response = await test_client_auth.get(
+            "/logout", params={"redirect_uri": "https://www.bretagne.duchy/"}
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @pytest.mark.parametrize(
+        "fief_domain,redirect_uri,status_code",
+        [
+            ("api.fief.dev", "http://api.fief.dev/admin/", status.HTTP_302_FOUND),
+            ("api.fief.dev:80", "http://API.fief.dev/admin/", status.HTTP_302_FOUND),
+            (
+                "api.fief.dev",
+                "https://api.fief.dev/admin/",
+                status.HTTP_400_BAD_REQUEST,
+            ),
+            ("api.fief.dev", "http://api.fief.dev:8000/", status.HTTP_400_BAD_REQUEST),
+            ("localhost:8000", "http://localhost:8000/", status.HTTP_302_FOUND),
+            ("localhost:8000", "http://localhost/", status.HTTP_400_BAD_REQUEST),
+            # The request's Host header is not a source of trust
+            ("other.fief.dev", "http://api.fief.dev/", status.HTTP_400_BAD_REQUEST),
+        ],
+    )
+    async def test_own_host(
+        self,
+        fief_domain: str,
+        redirect_uri: str,
+        status_code: int,
+        test_client_auth: httpx.AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(settings, "fief_domain", fief_domain)
+
+        response = await test_client_auth.get(
+            "/logout", params={"redirect_uri": redirect_uri}
+        )
+
+        assert response.status_code == status_code
+
     @pytest.mark.parametrize("cookie", [None, "INVALID_SESSION_TOKEN"])
+    @pytest.mark.usefixtures("allowed_logout_origin")
     async def test_no_session_token(
         self,
         cookie: str | None,
@@ -1422,6 +1585,7 @@ class TestAuthLogout:
         location = response.headers["Location"]
         assert location == redirect_uri
 
+    @pytest.mark.usefixtures("allowed_logout_origin")
     async def test_valid_session_token(
         self,
         test_client_auth: httpx.AsyncClient,
