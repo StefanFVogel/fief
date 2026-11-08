@@ -156,3 +156,23 @@ class TestAuthLogout:
             token_hash
         )
         assert deleted_admin_session_token is None
+
+    @pytest.mark.authenticated_admin(mode="session")
+    async def test_logout_chain_reaches_admin(
+        self,
+        test_client_dashboard: httpx.AsyncClient,
+        test_client_auth: httpx.AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(settings, "fief_domain", "api.fief.dev")
+
+        response = await test_client_dashboard.get("/auth/logout")
+        assert response.status_code == status.HTTP_302_FOUND
+
+        location = response.headers["Location"]
+        assert location.startswith("//api.fief.dev/logout?")
+
+        response = await test_client_auth.get(f"http:{location}")
+
+        assert response.status_code == status.HTTP_302_FOUND
+        assert response.headers["Location"] == "http://api.fief.dev/admin/"

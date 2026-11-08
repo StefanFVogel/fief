@@ -50,6 +50,9 @@ msgstr "Cliente desconhecido"
 msgid "redirect_uri is missing"
 msgstr "falta o redirect_uri"
 
+msgid "redirect_uri is not authorized"
+msgstr "redirect_uri não autorizado"
+
 #: fief/dependencies/auth.py:146
 msgid "scope is missing"
 msgstr "Falta o escopo"

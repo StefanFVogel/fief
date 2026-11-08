@@ -5,6 +5,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import (
+    AnyHttpUrl,
     DirectoryPath,
     EmailStr,
     Field,
@@ -125,6 +126,8 @@ class Settings(BaseSettings):
     default_refresh_token_lifetime_seconds: int = 3600 * 24 * 30
 
     webhooks_max_attempts: int = 5
+
+    logout_allowed_origins: list[AnyHttpUrl] = []
 
     fief_domain: str = "localhost:8000"
     fief_client_id: str

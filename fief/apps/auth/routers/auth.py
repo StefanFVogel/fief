@@ -2,7 +2,6 @@ import urllib.parse
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import RedirectResponse
-from pydantic import AnyUrl
 
 from fief.apps.auth.forms.auth import ConsentForm, LoginForm
 from fief.apps.auth.forms.verify_email import VerifyEmailForm
@@ -21,6 +20,7 @@ from fief.dependencies.auth import (
     get_base_context,
     get_consent_prompt,
     get_login_session,
+    get_logout_redirect_uri,
     get_needs_consent,
     get_nonce,
     get_optional_login_session,
@@ -38,13 +38,11 @@ from fief.dependencies.session_token import (
 )
 from fief.dependencies.tenant import get_current_tenant
 from fief.dependencies.users import get_user_manager
-from fief.exceptions import LogoutException
 from fief.forms import FormHelper
 from fief.locale import gettext_lazy as _
 from fief.models import Client, LoginSession, OAuthProvider, Tenant, User
 from fief.models.session_token import SessionToken
 from fief.repositories.session_token import SessionTokenRepository
-from fief.schemas.auth import LogoutError
 from fief.services.acr import ACR
 from fief.services.authentication_flow import AuthenticationFlow
 from fief.services.user_manager import InvalidEmailVerificationCodeError, UserManager
@@ -342,23 +340,16 @@ async def consent(
 
 @router.get("/logout", name="auth:logout")
 async def logout(
-    redirect_uri: AnyUrl | None = Query(None),
+    redirect_uri: str = Depends(get_logout_redirect_uri),
     session_token: SessionToken | None = Depends(get_session_token),
     session_token_repository: SessionTokenRepository = Depends(
         get_repository(SessionTokenRepository)
     ),
-    tenant: Tenant = Depends(get_current_tenant),
 ):
-    if redirect_uri is None:
-        raise LogoutException(
-            LogoutError.get_invalid_request(_("redirect_uri is missing")),
-            tenant,
-        )
-
     if session_token is not None:
         await session_token_repository.delete(session_token)
 
-    response = RedirectResponse(str(redirect_uri), status_code=status.HTTP_302_FOUND)
+    response = RedirectResponse(redirect_uri, status_code=status.HTTP_302_FOUND)
 
     response.delete_cookie(
         settings.session_cookie_name,

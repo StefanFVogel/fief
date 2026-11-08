@@ -50,6 +50,9 @@ msgstr "未知的 client"
 msgid "redirect_uri is missing"
 msgstr "缺少 redirect_url"
 
+msgid "redirect_uri is not authorized"
+msgstr "redirect_uri 未獲授權"
+
 #: fief/dependencies/auth.py:146
 msgid "scope is missing"
 msgstr "缺少 scope"
