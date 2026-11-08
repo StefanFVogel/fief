@@ -1,0 +1,20 @@
+# Allowlist: only what the image build needs enters the build context
+*
+!README.md
+!docker/supervisord.conf
+!fief/
+!js/
+!package.json
+!package-lock.json
+!pyproject.toml
+!rollup.config.js
+!styles/
+
+# Generated in the build stages, never taken from a local checkout
+fief/locale/**/*.mo
+fief/static/*.js
+fief/static/*.css
+**/__pycache__
+
+# Never send local secrets to the build
+**/.env*
