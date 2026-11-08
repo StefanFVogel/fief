@@ -224,6 +224,7 @@ dependencies = [
     "argon2_cffi ==23.1.0",
     "asgi-babel==0.10.0",
     "asyncpg ==0.30.0",
+    "click ==8.1.8",  # typer 0.12.5 crashes with click >= 8.2
     "dramatiq[redis] ==1.17.1",
     "email_validator ==2.2.0",
     "fastapi ==0.162.2",
