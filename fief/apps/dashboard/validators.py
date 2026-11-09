@@ -3,6 +3,7 @@ from urllib.parse import urlparse
 
 from wtforms import validators
 
+from fief.models.theme import FONT_FAMILY_ALLOWED_CHARACTERS
 from fief.services.localhost import is_localhost
 from fief.services.webhooks.target import is_allowed_host
 from fief.settings import settings
@@ -54,3 +55,26 @@ class WebhookURLValidator:
             return
         if host is not None and not is_allowed_host(host):
             raise InternalWebhookURLValidationError()
+
+
+class CSSColorValidator(validators.Regexp):
+    def __init__(self, message=None):
+        regex = r"^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})\Z"
+        super().__init__(regex, re.IGNORECASE, message or "Invalid color.")
+
+
+class FontFamilyValidator(validators.Regexp):
+    def __init__(self, message=None):
+        regex = rf"^[{FONT_FAMILY_ALLOWED_CHARACTERS}]+\Z"
+        super().__init__(
+            regex,
+            0,
+            message
+            or "Only letters, digits, spaces, commas, quotes and hyphens are allowed.",
+        )
+
+
+class FontCSSURLValidator(validators.Regexp):
+    def __init__(self, message=None):
+        regex = r"^https?://[^\s'\"()\\]+\Z"
+        super().__init__(regex, re.IGNORECASE | re.ASCII, message or "Invalid URL.")

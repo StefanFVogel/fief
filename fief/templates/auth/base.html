@@ -30,7 +30,7 @@
               color: {{ theme.text_color }};
               background-color: {{ theme.background_color }};
               font-size: {{ theme.font_size }}px;
-              font-family: {{ theme.font_family | safe }};
+              font-family: {{ theme.font_family | css_font_family }};
             }
           </style>
         {% endif %}
