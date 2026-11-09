@@ -14,6 +14,7 @@ from fief.repositories import (
     GrantRepository,
     LoginSessionRepository,
     SessionTokenRepository,
+    ThemeRepository,
     UserRepository,
 )
 from fief.services.acr import ACR
@@ -553,6 +554,51 @@ class TestAuthGetLogin:
         response = await test_client_auth.get(f"{path_prefix}/login", cookies=cookies)
 
         assert response.status_code == status.HTTP_200_OK
+
+    @pytest.mark.parametrize(
+        "font_family,expected",
+        [
+            ("'Inter', sans-serif", "font-family: 'Inter', sans-serif;"),
+            (
+                "</style><script>alert(1)</script><style>",
+                "font-family: stylescriptalert1scriptstyle;",
+            ),
+            ("Inter;} body { color: red", "font-family: Inter body  color red;"),
+        ],
+    )
+    async def test_theme_font_family(
+        self,
+        font_family: str,
+        expected: str,
+        test_client_auth: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        login_session = test_data["login_sessions"]["default"]
+        client = login_session.client
+        tenant = client.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
+
+        theme_repository = ThemeRepository(main_session)
+        if tenant.theme_id is not None:
+            theme = await theme_repository.get_by_id(tenant.theme_id)
+        else:
+            theme = await theme_repository.get_default()
+        assert theme is not None
+        theme.font_family = font_family
+        await theme_repository.update(theme)
+
+        cookies = {}
+        cookies[settings.login_session_cookie_name] = login_session.token
+
+        response = await test_client_auth.get(f"{path_prefix}/login", cookies=cookies)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "<script>alert(1)</script>" not in response.text
+        html = BeautifulSoup(response.text, features="html.parser")
+        styles = html.find_all("style")
+        assert len(styles) == 1
+        assert expected in styles[0].text
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from fief.models.base import Base
 from fief.models.generics import CreatedUpdatedAt, UUIDModel
 
+FONT_FAMILY_ALLOWED_CHARACTERS = "A-Za-z0-9 ,'\"-"
+
 
 class Theme(UUIDModel, CreatedUpdatedAt, Base):
     __tablename__ = "themes"

@@ -185,6 +185,7 @@ class TestUpdateTheme:
         iframe = preview.find("iframe")
         assert isinstance(iframe, Tag)
         assert iframe.attrs["srcdoc"] is not None
+        assert iframe.attrs["sandbox"] == []
 
         theme_preview_mock.preview.assert_called_once()
         theme_preview_mock.preview.call_args[0][0] == page
@@ -214,6 +215,92 @@ class TestUpdateTheme:
         updated_theme = await theme_repository.get_by_id(theme.id)
         assert updated_theme is not None
         assert updated_theme.primary_color == "#ff0000"
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("font_family", "</style><script>alert(1)</script><style>"),
+            ("font_family", "sans-serif;} body { background: url(https://evil) }"),
+            ("font_family", "Inter\\3c /style\\3e"),
+            ("primary_color", "#fff;} body { background: url(https://evil) }"),
+            ("primary_color", "red"),
+            ("background_color", "</style><script>alert(1)</script>"),
+            ("font_size", "16px;}"),
+            ("font_css_url", "javascript://example.com/%0aalert(1)"),
+            ("font_css_url", "https://fonts.example.com/css');} body { color: red"),
+            ("font_css_url", "https://fonts.example.com/css\\');"),
+        ],
+    )
+    @pytest.mark.authenticated_admin(mode="session")
+    @pytest.mark.htmx(target="main")
+    async def test_invalid_css_value(
+        self,
+        field: str,
+        value: str,
+        test_client_dashboard: httpx.AsyncClient,
+        test_data: TestData,
+        csrf_token: str,
+        main_session: AsyncSession,
+    ):
+        theme = test_data["themes"]["default"]
+        response = await test_client_dashboard.post(
+            f"/customization/themes/{theme.id}/edit",
+            data={
+                **theme.__dict__,
+                field: value,
+                "csrf_token": csrf_token,
+            },
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        theme_repository = ThemeRepository(main_session)
+        updated_theme = await theme_repository.get_by_id(theme.id)
+        assert updated_theme is not None
+        assert getattr(updated_theme, field) != value
+
+    @pytest.mark.parametrize(
+        "font_family,font_css_url",
+        [
+            ("'Inter', sans-serif", None),
+            ('"Open Sans", Arial, Helvetica, sans-serif', None),
+            (
+                "Roboto Mono, monospace",
+                "https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap",
+            ),
+        ],
+    )
+    @pytest.mark.authenticated_admin(mode="session")
+    @pytest.mark.htmx(target="main")
+    async def test_valid_font(
+        self,
+        font_family: str,
+        font_css_url: str | None,
+        test_client_dashboard: httpx.AsyncClient,
+        test_data: TestData,
+        csrf_token: str,
+        main_session: AsyncSession,
+    ):
+        theme = test_data["themes"]["default"]
+        data = {
+            **theme.__dict__,
+            "font_family": font_family,
+            "csrf_token": csrf_token,
+        }
+        if font_css_url is not None:
+            data["font_css_url"] = font_css_url
+        response = await test_client_dashboard.post(
+            f"/customization/themes/{theme.id}/edit", data=data
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+        theme_repository = ThemeRepository(main_session)
+        updated_theme = await theme_repository.get_by_id(theme.id)
+        assert updated_theme is not None
+        assert updated_theme.font_family == font_family
+        if font_css_url is not None:
+            assert updated_theme.font_css_url == font_css_url
 
 
 @pytest.mark.asyncio
