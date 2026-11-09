@@ -7,11 +7,17 @@ from fief.dependencies.auth import (
     get_base_context,
     get_optional_login_session,
 )
+from fief.dependencies.rate_limit import get_rate_limiter
 from fief.dependencies.tenant import get_current_tenant
 from fief.dependencies.users import get_user_manager
 from fief.forms import FormHelper
 from fief.locale import gettext_lazy as _
 from fief.models import LoginSession, Tenant
+from fief.services.rate_limit import (
+    RateLimiter,
+    RateLimitExceededError,
+    get_email_rate_limit_keys,
+)
 from fief.services.user_manager import (
     InvalidResetPasswordTokenError,
     UserDoesNotExistError,
@@ -28,6 +34,7 @@ async def forgot_password(
     user_manager: UserManager = Depends(get_user_manager),
     tenant: Tenant = Depends(get_current_tenant),
     context: BaseContext = Depends(get_base_context),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
     form_helper = FormHelper(
         ForgotPasswordForm,
@@ -39,9 +46,15 @@ async def forgot_password(
 
     if await form_helper.is_submitted_and_valid():
         try:
+            await rate_limiter.hit(
+                get_email_rate_limit_keys(
+                    request, "forgot_password", tenant.id, form.email.data
+                )
+            )
             user = await user_manager.get_by_email(form.email.data, tenant.id)
             await user_manager.forgot_password(user, request=request)
-        except (UserDoesNotExistError, UserInactiveError):
+        # Same response under backoff, not to reveal anything about the account
+        except (RateLimitExceededError, UserDoesNotExistError, UserInactiveError):
             pass
 
         form_helper.context["success"] = _(
@@ -60,6 +73,7 @@ async def reset_password(
     login_session: LoginSession | None = Depends(get_optional_login_session),
     tenant: Tenant = Depends(get_current_tenant),
     context: BaseContext = Depends(get_base_context),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
     form_helper = FormHelper(
         ResetPasswordForm,
@@ -79,7 +93,7 @@ async def reset_password(
 
     if await form_helper.is_submitted_and_valid() and hx_trigger is None:
         try:
-            await user_manager.reset_password(
+            user = await user_manager.reset_password(
                 form.token.data, form.password.data, tenant, request=request
             )
         except (
@@ -93,6 +107,11 @@ async def reset_password(
                 fatal=True,
             )
         else:
+            await rate_limiter.reset(
+                get_email_rate_limit_keys(
+                    request, "forgot_password", tenant.id, user.email
+                )
+            )
             if login_session is not None:
                 redirection = tenant.url_path_for(request, "auth:login")
                 return RedirectResponse(

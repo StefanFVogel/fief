@@ -114,6 +114,12 @@ class Settings(BaseSettings):
 
     reset_password_token_lifetime_seconds: int = 3600
 
+    rate_limit_enabled: bool = True
+    rate_limit_free_attempts: int = 1
+    rate_limit_base_wait_seconds: int = 60
+    rate_limit_max_wait_seconds: int = 900
+    rate_limit_counter_lifetime_seconds: int = 86400
+
     oauth_session_lifetime_seconds: int = 3600
 
     session_cookie_name: str = "fief_session"

@@ -11,6 +11,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from dramatiq import Actor, Message
+from fakeredis import FakeAsyncRedis, FakeServer
 from fastapi import FastAPI
 from fief_client import FiefAsync
 from sqlalchemy_utils import create_database, drop_database
@@ -23,10 +24,12 @@ from fief.db.migration import migrate_schema
 from fief.db.types import DatabaseConnectionParameters, DatabaseType, get_driver
 from fief.dependencies.db import get_main_async_session
 from fief.dependencies.fief import get_fief
+from fief.dependencies.rate_limit import get_rate_limiter
 from fief.dependencies.tasks import get_send_task
 from fief.dependencies.tenant_email_domain import get_tenant_email_domain
 from fief.dependencies.theme import get_theme_preview
 from fief.models import AdminAPIKey, AdminSessionToken, User
+from fief.services.rate_limit import RateLimiter
 from fief.services.tenant_email_domain import TenantEmailDomain
 from fief.services.theme_preview import ThemePreview
 from fief.settings import settings
@@ -148,6 +151,23 @@ async def send_task_mock() -> MagicMock:
         message.encode()
 
     return MagicMock(side_effect=_send_task)
+
+
+@pytest.fixture
+def rate_limiter_redis() -> FakeAsyncRedis:
+    return FakeAsyncRedis(server=FakeServer())
+
+
+@pytest.fixture
+def rate_limiter_clock() -> MagicMock:
+    return MagicMock(return_value=1_000_000.0)
+
+
+@pytest.fixture
+def rate_limiter(
+    rate_limiter_redis: FakeAsyncRedis, rate_limiter_clock: MagicMock
+) -> RateLimiter:
+    return RateLimiter(rate_limiter_redis, clock=rate_limiter_clock)
 
 
 @pytest_asyncio.fixture
@@ -279,6 +299,7 @@ async def test_client_generator(
     fief_client_mock: MagicMock,
     theme_preview_mock: MagicMock,
     tenant_email_domain_mock: MagicMock,
+    rate_limiter: RateLimiter,
     authenticated_admin: Callable[
         [httpx.AsyncClient], Coroutine[None, None, httpx.AsyncClient]
     ],
@@ -293,6 +314,7 @@ async def test_client_generator(
         app.dependency_overrides[get_tenant_email_domain] = (
             lambda: tenant_email_domain_mock
         )
+        app.dependency_overrides[get_rate_limiter] = lambda: rate_limiter
         settings.fief_admin_session_cookie_domain = ""
 
         async with asgi_lifespan.LifespanManager(app):

@@ -38,6 +38,16 @@ def generate_jwt(user: User, *, exp: int | None = None, with_exp: bool = True) -
     return token.serialize()
 
 
+def get_forgot_password_calls(send_task_mock: MagicMock) -> int:
+    return len(
+        [
+            call
+            for call in send_task_mock.call_args_list
+            if call.args[0] == on_after_forgot_password
+        ]
+    )
+
+
 @pytest.mark.asyncio
 class TestGetForgotPassword:
     async def test_valid(
@@ -107,6 +117,33 @@ class TestPostForgotPassword:
             str(user.id),
             str_match(r"/reset.*token="),
         )
+
+    async def test_too_many_requests(
+        self,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        send_task_mock: MagicMock,
+        rate_limiter_clock: MagicMock,
+    ):
+        responses = []
+        for _ in range(3):
+            response = await test_client_auth_csrf.post(
+                "/forgot",
+                data={"email": "anne@bretagne.duchy", "csrf_token": csrf_token},
+            )
+            assert response.status_code == status.HTTP_200_OK
+            responses.append(response)
+
+        assert get_forgot_password_calls(send_task_mock) == 2
+        assert responses[2].text == responses[1].text
+
+        rate_limiter_clock.return_value += 60
+
+        response = await test_client_auth_csrf.post(
+            "/forgot", data={"email": "anne@bretagne.duchy", "csrf_token": csrf_token}
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert get_forgot_password_calls(send_task_mock) == 3
 
     async def test_existing_user_token_expires(
         self,
@@ -278,6 +315,34 @@ class TestPostResetPassword:
 
         redirect_uri = response.headers["Location"]
         assert redirect_uri.endswith("/")
+
+    async def test_valid_resets_forgot_password_rate_limit(
+        self,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+        send_task_mock: MagicMock,
+    ):
+        user = test_data["users"]["regular"]
+        for _ in range(2):
+            await test_client_auth_csrf.post(
+                "/forgot", data={"email": user.email, "csrf_token": csrf_token}
+            )
+
+        response = await test_client_auth_csrf.post(
+            "/reset",
+            data={
+                "password": "newherminetincture",
+                "token": generate_jwt(user),
+                "csrf_token": csrf_token,
+            },
+        )
+        assert response.status_code == status.HTTP_302_FOUND
+
+        await test_client_auth_csrf.post(
+            "/forgot", data={"email": user.email, "csrf_token": csrf_token}
+        )
+        assert get_forgot_password_calls(send_task_mock) == 3
 
     async def test_valid_with_login_session(
         self,

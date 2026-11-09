@@ -643,6 +643,50 @@ class TestAuthPostLogin:
         login_hint_cookie = response.cookies[settings.login_hint_cookie_name]
         assert urllib.parse.unquote(login_hint_cookie) == "anne@bretagne.duchy"
 
+    async def test_too_many_attempts(
+        self,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+        rate_limiter_clock: MagicMock,
+    ):
+        login_session = test_data["login_sessions"]["default"]
+        client = login_session.client
+        tenant = client.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
+
+        cookies = {}
+        cookies[settings.login_session_cookie_name] = login_session.token
+
+        async def _login(password: str) -> httpx.Response:
+            return await test_client_auth_csrf.post(
+                f"{path_prefix}/login",
+                data={
+                    "email": "anne@bretagne.duchy",
+                    "password": password,
+                    "csrf_token": csrf_token,
+                },
+                cookies=cookies,
+            )
+
+        for _ in range(2):
+            response = await _login("foo")
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        response = await _login("herminetincture")
+        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+        assert response.headers["X-Fief-Error"] == "too_many_attempts"
+
+        rate_limiter_clock.return_value += 60
+
+        response = await _login("herminetincture")
+        assert response.status_code == status.HTTP_302_FOUND
+
+        # Counters were reset by the successful login
+        for _ in range(2):
+            response = await _login("foo")
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+
     async def test_valid_with_session(
         self,
         test_client_auth_csrf: httpx.AsyncClient,
@@ -814,6 +858,30 @@ class TestAuthVerifyEmailRequest:
         email_verifications = await email_verification_repository.get_by_user(user.id)
         assert len(email_verifications) == 1
 
+    async def test_resend_too_many_requests(
+        self,
+        test_client_auth: httpx.AsyncClient,
+        test_data: TestData,
+        send_task_mock: MagicMock,
+    ):
+        user = test_data["users"]["not_verified_email"]
+        tenant = user.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
+        cookies = {}
+        cookies[settings.session_cookie_name] = session_token_tokens[
+            "not_verified_email"
+        ][0]
+
+        for _ in range(3):
+            response = await test_client_auth.get(
+                f"{path_prefix}/verify-request", cookies=cookies
+            )
+            assert response.status_code == status.HTTP_302_FOUND
+            redirect_uri = response.headers["Location"]
+            assert redirect_uri.endswith(f"{path_prefix}/verify")
+
+        assert send_task_mock.call_count == 2
+
 
 @pytest.mark.asyncio
 class TestAuthGetVerifyEmail:
@@ -952,6 +1020,47 @@ class TestAuthPostVerifyEmail:
 
         headers = response.headers
         assert headers["X-Fief-Error"] == "invalid_code"
+
+    async def test_too_many_attempts(
+        self,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+        rate_limiter_clock: MagicMock,
+    ):
+        user = test_data["users"]["not_verified_email"]
+        code = email_verification_codes["not_verified_email"][0]
+        tenant = user.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
+        cookies = {}
+        cookies[settings.session_cookie_name] = session_token_tokens[
+            "not_verified_email"
+        ][0]
+
+        for _ in range(2):
+            response = await test_client_auth_csrf.post(
+                f"{path_prefix}/verify",
+                data={"code": "ABCDEF", "csrf_token": csrf_token},
+                cookies=cookies,
+            )
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        response = await test_client_auth_csrf.post(
+            f"{path_prefix}/verify",
+            data={"code": code, "csrf_token": csrf_token},
+            cookies=cookies,
+        )
+        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+        assert response.headers["X-Fief-Error"] == "too_many_attempts"
+
+        rate_limiter_clock.return_value += 60
+
+        response = await test_client_auth_csrf.post(
+            f"{path_prefix}/verify",
+            data={"code": code, "csrf_token": csrf_token},
+            cookies=cookies,
+        )
+        assert response.status_code == status.HTTP_302_FOUND
 
     @pytest.mark.parametrize(
         "has_login_session,redirect_path",
