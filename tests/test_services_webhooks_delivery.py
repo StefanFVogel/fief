@@ -1,4 +1,5 @@
 import ipaddress
+import socket
 
 import httpx
 import pytest
@@ -187,6 +188,8 @@ class TestWebhookDelivery:
             ("http://internal.bretagne.duchy/webhook", ["192.168.1.10"]),
             ("http://internal.bretagne.duchy/webhook", ["fd00::1"]),
             ("http://internal.bretagne.duchy/webhook", [PUBLIC_IP, "10.0.0.1"]),
+            ("http://internal.bretagne.duchy/webhook", ["64:ff9b::a00:1"]),
+            ("http://internal.bretagne.duchy/webhook", ["fec0::1"]),
         ],
     )
     async def test_deliver_blocked_target(
@@ -244,3 +247,51 @@ class TestWebhookDelivery:
         assert route_mock.called
         request, _ = route_mock.calls.last
         assert request.headers["host"] == "internal.bretagne.duchy"
+
+    async def test_deliver_ipv6_address(
+        self,
+        resolved_addresses: list[str],
+        respx_mock: respx.MockRouter,
+        webhook_delivery: WebhookDelivery,
+        webhook_event: WebhookEvent,
+        test_data: TestData,
+    ):
+        resolved_addresses[:] = ["2606:4700::1"]
+        webhook = test_data["webhooks"]["all"]
+        route_mock = respx_mock.post("https://[2606:4700::1]/webhook").mock(
+            return_value=httpx.Response(200, text="Ok")
+        )
+
+        await webhook_delivery.deliver(webhook, webhook_event)
+
+        assert route_mock.called
+        request, _ = route_mock.calls.last
+        assert request.headers["host"] == "internal.bretagne.duchy"
+
+    async def test_deliver_resolution_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        respx_mock: respx.MockRouter,
+        webhook_delivery: WebhookDelivery,
+        webhook_event: WebhookEvent,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        async def _resolve_host(host: str):
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+
+        monkeypatch.setattr(target, "resolve_host", _resolve_host)
+        webhook = test_data["webhooks"]["all"]
+
+        with pytest.raises(WebhookDeliveryError):
+            await webhook_delivery.deliver(webhook, webhook_event)
+
+        assert len(respx_mock.calls) == 0
+
+        webhook_log_repository = WebhookLogRepository(main_session)
+        webhook_logs = await webhook_log_repository.list(
+            select(WebhookLog).order_by(WebhookLog.created_at.desc())
+        )
+        webhook_log = webhook_logs[0]
+        assert webhook_log.error_type == "gaierror"
+        assert not webhook_log.success

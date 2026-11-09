@@ -6,6 +6,8 @@ from fief.settings import settings
 
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
+NAT64_NETWORK = ipaddress.IPv6Network("64:ff9b::/96")
+
 
 class WebhookTargetBlockedError(Exception):
     def __init__(self, host: str) -> None:
@@ -15,8 +17,13 @@ class WebhookTargetBlockedError(Exception):
 def is_allowed_address(address: IPAddress) -> bool:
     if any(address in network for network in settings.webhooks_allowed_networks):
         return True
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
-        return is_allowed_address(address.ipv4_mapped)
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.ipv4_mapped is not None:
+            return is_allowed_address(address.ipv4_mapped)
+        if address in NAT64_NETWORK:
+            return is_allowed_address(ipaddress.IPv4Address(int(address) & 0xFFFFFFFF))
+        if address.is_site_local:
+            return False
     return address.is_global and not address.is_multicast
 
 
@@ -38,7 +45,9 @@ def is_allowed_host(host: str) -> bool:
 
 async def resolve_host(host: str) -> list[IPAddress]:
     loop = asyncio.get_running_loop()
-    infos = await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    infos = await loop.getaddrinfo(
+        host, None, type=socket.SOCK_STREAM, flags=socket.AI_ADDRCONFIG
+    )
     return [ipaddress.ip_address(info[4][0]) for info in infos]
 
 

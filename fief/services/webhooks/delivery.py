@@ -59,7 +59,12 @@ class WebhookDelivery:
                     webhook_log.response = await self._read_response(response)
                     response.raise_for_status()
                 webhook_log.success = True
-            except (httpx.HTTPError, socket.gaierror, WebhookTargetBlockedError) as e:
+            except (
+                httpx.HTTPError,
+                socket.gaierror,
+                UnicodeError,
+                WebhookTargetBlockedError,
+            ) as e:
                 webhook_log.error_type = type(e).__name__
                 webhook_log.error_message = str(e)
                 raise WebhookDeliveryError(str(e)) from e
