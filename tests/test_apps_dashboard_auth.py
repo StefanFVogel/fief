@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -9,6 +10,9 @@ from fief.crypto.token import get_token_hash
 from fief.db import AsyncSession
 from fief.repositories import AdminSessionTokenRepository
 from fief.settings import settings
+from fief.settings_class import Settings
+from tests.conftest import create_admin_session_token
+from tests.data import TestData
 from tests.helpers import HTTPXResponseAssertion
 
 
@@ -142,11 +146,168 @@ class TestAuthCallback:
         assert session_token is not None
         assert session_token.userinfo == {"email": "anne@bretagne.duchy"}
 
+        expected_expires_at = datetime.now(UTC) + timedelta(
+            seconds=settings.fief_admin_session_lifetime_seconds
+        )
+        assert (
+            expected_expires_at - timedelta(seconds=5)
+            <= session_token.expires_at
+            <= expected_expires_at
+        )
+
+        assert any(
+            header.startswith(f"{settings.fief_admin_session_cookie_name}=")
+            and f"max-age={settings.fief_admin_session_lifetime_seconds}"
+            in header.lower()
+            for header in response.headers.get_list("Set-Cookie")
+        )
+
         assert any(
             header.startswith(f"{settings.fief_admin_state_cookie_name}=")
             and "max-age=0" in header.lower()
             for header in response.headers.get_list("Set-Cookie")
         )
+
+
+def test_admin_session_settings_defaults():
+    assert Settings.model_fields["fief_admin_session_lifetime_seconds"].default == 7200
+    assert (
+        Settings.model_fields["fief_admin_session_idle_timeout_seconds"].default == 1800
+    )
+
+
+def test_admin_session_settings_override(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("FIEF_ADMIN_SESSION_LIFETIME_SECONDS", "600")
+    monkeypatch.setenv("FIEF_ADMIN_SESSION_IDLE_TIMEOUT_SECONDS", "60")
+
+    overridden_settings = Settings()  # pyright: ignore
+
+    assert overridden_settings.fief_admin_session_lifetime_seconds == 600
+    assert overridden_settings.fief_admin_session_idle_timeout_seconds == 60
+
+
+@pytest.mark.asyncio
+class TestAdminSessionExpiration:
+    async def _get_profile(
+        self,
+        test_client_dashboard: httpx.AsyncClient,
+        main_session: AsyncSession,
+        test_data: TestData,
+        *,
+        created_ago: timedelta = timedelta(0),
+        last_activity_ago: timedelta = timedelta(0),
+    ):
+        session_token, token = await create_admin_session_token(
+            test_data["users"]["admin"], main_session
+        )
+        now = datetime.now(UTC)
+        session_token.created_at = now - created_ago
+        session_token.expires_at = (
+            now
+            - created_ago
+            + timedelta(seconds=settings.fief_admin_session_lifetime_seconds)
+        )
+        session_token.last_activity_at = now - last_activity_ago
+        main_session.add(session_token)
+        await main_session.commit()
+        expires_at = session_token.expires_at
+
+        test_client_dashboard.cookies.set(
+            settings.fief_admin_session_cookie_name, token
+        )
+        response = await test_client_dashboard.get("/auth/profile")
+
+        main_session.expunge_all()
+        repository = AdminSessionTokenRepository(main_session)
+        stored_session_token = await repository.get_by_token(get_token_hash(token))
+
+        return response, expires_at, stored_session_token
+
+    async def test_absolute_lifetime_exceeded(
+        self,
+        test_client_dashboard: httpx.AsyncClient,
+        main_session: AsyncSession,
+        test_data: TestData,
+    ):
+        response, _, stored_session_token = await self._get_profile(
+            test_client_dashboard,
+            main_session,
+            test_data,
+            created_ago=timedelta(
+                seconds=settings.fief_admin_session_lifetime_seconds + 1
+            ),
+        )
+
+        assert response.status_code == status.HTTP_307_TEMPORARY_REDIRECT
+        assert response.headers["Location"].endswith("/auth/login")
+        assert stored_session_token is None
+
+    async def test_idle_timeout_exceeded(
+        self,
+        test_client_dashboard: httpx.AsyncClient,
+        main_session: AsyncSession,
+        test_data: TestData,
+    ):
+        response, _, stored_session_token = await self._get_profile(
+            test_client_dashboard,
+            main_session,
+            test_data,
+            created_ago=timedelta(
+                seconds=settings.fief_admin_session_idle_timeout_seconds + 60
+            ),
+            last_activity_ago=timedelta(
+                seconds=settings.fief_admin_session_idle_timeout_seconds + 1
+            ),
+        )
+
+        assert response.status_code == status.HTTP_307_TEMPORARY_REDIRECT
+        assert response.headers["Location"].endswith("/auth/login")
+        assert stored_session_token is None
+
+    async def test_idle_timeout_setting_override(
+        self,
+        test_client_dashboard: httpx.AsyncClient,
+        main_session: AsyncSession,
+        test_data: TestData,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(settings, "fief_admin_session_idle_timeout_seconds", 10)
+
+        response, _, stored_session_token = await self._get_profile(
+            test_client_dashboard,
+            main_session,
+            test_data,
+            created_ago=timedelta(seconds=60),
+            last_activity_ago=timedelta(seconds=11),
+        )
+
+        assert response.status_code == status.HTTP_307_TEMPORARY_REDIRECT
+        assert stored_session_token is None
+
+    async def test_activity_extends_idle_window_only(
+        self,
+        test_client_dashboard: httpx.AsyncClient,
+        main_session: AsyncSession,
+        test_data: TestData,
+    ):
+        response, expires_at, stored_session_token = await self._get_profile(
+            test_client_dashboard,
+            main_session,
+            test_data,
+            created_ago=timedelta(
+                seconds=settings.fief_admin_session_idle_timeout_seconds + 60
+            ),
+            last_activity_ago=timedelta(
+                seconds=settings.fief_admin_session_idle_timeout_seconds - 60
+            ),
+        )
+
+        assert response.status_code == status.HTTP_302_FOUND
+        assert stored_session_token is not None
+        assert stored_session_token.last_activity_at >= datetime.now(UTC) - timedelta(
+            seconds=5
+        )
+        assert stored_session_token.expires_at == expires_at
 
 
 @pytest.mark.asyncio

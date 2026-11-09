@@ -151,6 +151,8 @@ class Settings(BaseSettings):
     fief_admin_session_cookie_name: str = "fief_admin_session"
     fief_admin_session_cookie_domain: str = ""
     fief_admin_session_cookie_secure: bool = True
+    fief_admin_session_lifetime_seconds: int = 3600 * 2
+    fief_admin_session_idle_timeout_seconds: int = 60 * 30
     fief_admin_state_cookie_name: str = "fief_admin_state"
     fief_admin_state_cookie_domain: str = ""
     fief_admin_state_cookie_secure: bool = True

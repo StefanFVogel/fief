@@ -91,6 +91,7 @@ async def callback(
         domain=settings.fief_admin_session_cookie_domain,
         secure=settings.fief_admin_session_cookie_secure,
         httponly=True,
+        max_age=settings.fief_admin_session_lifetime_seconds,
     )
     response.delete_cookie(
         settings.fief_admin_state_cookie_name,

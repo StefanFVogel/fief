@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import APIKeyCookie
 from fief_client import FiefUserInfo
@@ -23,6 +25,16 @@ async def get_optional_admin_session_token(
         return None
     token_hash = get_token_hash(token)
     session_token = await repository.get_by_token(token_hash)
+    if session_token is None:
+        return None
+
+    last_activity_limit = datetime.now(UTC) - timedelta(
+        seconds=settings.fief_admin_session_idle_timeout_seconds
+    )
+    if session_token.is_expired or session_token.last_activity_at < last_activity_limit:
+        await repository.delete(session_token)
+        return None
+
     return session_token
 
 
@@ -31,12 +43,19 @@ async def get_admin_session_token(
     admin_session_token: AdminSessionToken | None = Depends(
         get_optional_admin_session_token
     ),
+    repository: AdminSessionTokenRepository = Depends(
+        get_repository(AdminSessionTokenRepository)
+    ),
 ) -> AdminSessionToken:
     if admin_session_token is None:
         raise HTTPException(
             status_code=status.HTTP_307_TEMPORARY_REDIRECT,
             headers={"Location": str(request.url_for("dashboard.auth:login"))},
         )
+
+    admin_session_token.last_activity_at = datetime.now(UTC)
+    await repository.update(admin_session_token)
+
     return admin_session_token
 
 
