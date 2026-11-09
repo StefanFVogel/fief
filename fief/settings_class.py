@@ -112,6 +112,8 @@ class Settings(BaseSettings):
     email_verification_code_length: int = 6
     email_verification_lifetime_seconds: int = 3600
 
+    reset_password_token_lifetime_seconds: int = 3600
+
     oauth_session_lifetime_seconds: int = 3600
 
     session_cookie_name: str = "fief_session"
