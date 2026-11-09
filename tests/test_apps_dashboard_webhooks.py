@@ -102,6 +102,32 @@ class TestCreateWebhook:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.0.0.1/webhook",
+            "http://169.254.169.254/latest/meta-data",
+            "http://[::ffff:10.0.0.1]/webhook",
+            "http://localhost:8000/webhook",
+        ],
+    )
+    @pytest.mark.authenticated_admin(mode="session")
+    @pytest.mark.htmx(target="modal")
+    async def test_internal_url(
+        self, url: str, test_client_dashboard: httpx.AsyncClient, csrf_token: str
+    ):
+        response = await test_client_dashboard.post(
+            "/webhooks/create",
+            data={
+                "url": url,
+                "events": ["user.created"],
+                "csrf_token": csrf_token,
+            },
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "internal address" in response.text
+
     @pytest.mark.authenticated_admin(mode="session")
     @pytest.mark.htmx(target="modal")
     async def test_valid(

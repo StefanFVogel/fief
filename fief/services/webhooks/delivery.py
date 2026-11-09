@@ -1,4 +1,5 @@
 import hmac
+import socket
 import time
 from hashlib import sha256
 
@@ -8,6 +9,11 @@ from fief import __version__
 from fief.models import Webhook, WebhookLog
 from fief.repositories import WebhookLogRepository
 from fief.services.webhooks.models import WebhookEvent
+from fief.services.webhooks.target import (
+    WebhookTargetBlockedError,
+    resolve_allowed_address,
+)
+from fief.settings import settings
 
 
 class WebhookDeliveryError(Exception):
@@ -33,26 +39,41 @@ class WebhookDelivery:
             )
 
             try:
-                response = await client.post(
-                    webhook.url,
+                url = httpx.URL(webhook.url)
+                host = url.raw_host.decode("ascii")
+                address = await resolve_allowed_address(host)
+                async with client.stream(
+                    "POST",
+                    url.copy_with(host=str(address)),
                     content=payload,
                     headers={
+                        "Host": url.netloc.decode("ascii"),
                         "User-Agent": f"fief-server-webhooks/{__version__}",
                         "Content-Type": "application/json",
                         "X-Fief-Webhook-Signature": signature,
                         "X-Fief-Webhook-Timestamp": str(ts),
                     },
+                    extensions={"sni_hostname": host},
                     follow_redirects=False,
-                )
-                webhook_log.response = response.text
-                response.raise_for_status()
+                ) as response:
+                    webhook_log.response = await self._read_response(response)
+                    response.raise_for_status()
                 webhook_log.success = True
-            except httpx.HTTPError as e:
+            except (httpx.HTTPError, socket.gaierror, WebhookTargetBlockedError) as e:
                 webhook_log.error_type = type(e).__name__
                 webhook_log.error_message = str(e)
                 raise WebhookDeliveryError(str(e)) from e
             finally:
                 await self.webhook_log_repository.create(webhook_log)
+
+    async def _read_response(self, response: httpx.Response) -> str:
+        max_size = settings.webhooks_max_response_log_size
+        content = b""
+        async for chunk in response.aiter_bytes():
+            content += chunk
+            if len(content) >= max_size:
+                break
+        return content[:max_size].decode(response.encoding or "utf-8", "replace")
 
     def _get_signature(self, payload: str, secret: str) -> tuple[str, int]:
         ts = int(time.time())

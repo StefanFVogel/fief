@@ -1,9 +1,12 @@
+import ipaddress
 import uuid
 
 import httpx
 import pytest
 from fastapi import status
 
+from fief.errors import APIErrorCode
+from fief.settings import settings
 from tests.data import TestData
 from tests.helpers import HTTPXResponseAssertion
 
@@ -90,6 +93,29 @@ class TestCreateWebhook:
         json = response.json()
         assert json["detail"][0]["loc"] == ["body", "events", 1]
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://127.0.0.1/webhook",
+            "http://10.0.0.1/webhook",
+            "http://169.254.169.254/latest/meta-data",
+            "http://[::1]/webhook",
+            "http://localhost:8000/webhook",
+        ],
+    )
+    @pytest.mark.authenticated_admin
+    async def test_internal_url(self, url: str, test_client_api: httpx.AsyncClient):
+        response = await test_client_api.post(
+            "/webhooks/", json={"url": url, "events": ["user.created"]}
+        )
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+        json = response.json()
+        assert json["detail"][0]["loc"] == ["body", "url"]
+        assert json["detail"][0]["type"] == APIErrorCode.WEBHOOK_INTERNAL_URL
+        assert "internal address" in json["detail"][0]["msg"]
+
     @pytest.mark.authenticated_admin
     async def test_valid(self, test_client_api: httpx.AsyncClient, test_data: TestData):
         response = await test_client_api.post(
@@ -145,6 +171,38 @@ class TestUpdateWebhook:
 
         json = response.json()
         assert json["detail"][0]["loc"] == ["body", "events", 1]
+
+    @pytest.mark.authenticated_admin
+    async def test_internal_url(
+        self, test_client_api: httpx.AsyncClient, test_data: TestData
+    ):
+        webhook = test_data["webhooks"]["all"]
+        response = await test_client_api.patch(
+            f"/webhooks/{webhook.id}",
+            json={"url": "http://169.254.169.254/latest/meta-data"},
+        )
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+        json = response.json()
+        assert json["detail"][0]["loc"] == ["body", "url"]
+
+    @pytest.mark.authenticated_admin
+    async def test_allowed_network_url(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        test_client_api: httpx.AsyncClient,
+        test_data: TestData,
+    ):
+        monkeypatch.setattr(
+            settings, "webhooks_allowed_networks", [ipaddress.ip_network("10.0.0.0/8")]
+        )
+        webhook = test_data["webhooks"]["all"]
+        response = await test_client_api.patch(
+            f"/webhooks/{webhook.id}", json={"url": "http://10.1.2.3/webhook"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
 
     @pytest.mark.authenticated_admin
     async def test_valid(self, test_client_api: httpx.AsyncClient, test_data: TestData):

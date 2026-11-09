@@ -1,9 +1,13 @@
 from enum import StrEnum
+from typing import Annotated
 
-from pydantic import BaseModel, HttpUrl
+from pydantic import AfterValidator, BaseModel, HttpUrl
+from pydantic_core import PydanticCustomError
 
+from fief.errors import APIErrorCode
 from fief.schemas.generics import CreatedUpdatedAt, UUIDSchema
 from fief.services.webhooks.models import WEBHOOK_EVENTS
+from fief.services.webhooks.target import is_allowed_host
 
 WebhookEventType = StrEnum(  # type: ignore
     "WebhookEventType",
@@ -11,13 +15,25 @@ WebhookEventType = StrEnum(  # type: ignore
 )
 
 
+def validate_webhook_url(url: HttpUrl) -> HttpUrl:
+    if url.host is None or not is_allowed_host(url.host):
+        raise PydanticCustomError(
+            APIErrorCode.WEBHOOK_INTERNAL_URL.value,
+            "Webhook URLs can't point to an internal address.",
+        )
+    return url
+
+
+WebhookURL = Annotated[HttpUrl, AfterValidator(validate_webhook_url)]
+
+
 class WebhookCreate(BaseModel):
-    url: HttpUrl
+    url: WebhookURL
     events: list[WebhookEventType]
 
 
 class WebhookUpdate(BaseModel):
-    url: HttpUrl | None = None
+    url: WebhookURL | None = None
     events: list[WebhookEventType] | None = None
 
 
