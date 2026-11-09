@@ -1,3 +1,5 @@
+import secrets
+
 from fastapi import Cookie, Depends, HTTPException, Query, Request, status
 from pydantic import UUID4
 
@@ -80,6 +82,9 @@ async def get_oauth_session(
     code: str | None = Query(None),
     state: str | None = Query(None),
     error: str | None = Query(None),
+    oauth_session_cookie: str | None = Cookie(
+        None, alias=settings.oauth_session_cookie_name
+    ),
     oauth_session_repository: OAuthSessionRepository = Depends(
         get_repository(OAuthSessionRepository)
     ),
@@ -96,9 +101,12 @@ async def get_oauth_session(
             fatal=True,
         )
 
+    # The state must match the cookie set on the browser which started the flow
     oauth_session = (
         await oauth_session_repository.get_by_token(state)
         if state is not None
+        and oauth_session_cookie is not None
+        and secrets.compare_digest(state, oauth_session_cookie)
         else None
     )
     if oauth_session is None:

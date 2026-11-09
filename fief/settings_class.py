@@ -114,6 +114,9 @@ class Settings(BaseSettings):
 
     reset_password_token_lifetime_seconds: int = 3600
 
+    oauth_session_cookie_name: str = "fief_oauth_session"
+    oauth_session_cookie_domain: str = ""
+    oauth_session_cookie_secure: bool = True
     oauth_session_lifetime_seconds: int = 3600
 
     session_cookie_name: str = "fief_session"
@@ -142,6 +145,10 @@ class Settings(BaseSettings):
     fief_admin_session_cookie_name: str = "fief_admin_session"
     fief_admin_session_cookie_domain: str = ""
     fief_admin_session_cookie_secure: bool = True
+    fief_admin_state_cookie_name: str = "fief_admin_state"
+    fief_admin_state_cookie_domain: str = ""
+    fief_admin_state_cookie_secure: bool = True
+    fief_admin_state_cookie_lifetime_seconds: int = 3600
 
     fief_documentation_url: str = "https://docs.fief.dev"
 

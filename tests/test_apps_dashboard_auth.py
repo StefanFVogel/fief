@@ -30,8 +30,15 @@ class TestAuthLogin:
         location = response.headers["Location"]
         assert location == "http://localhost/authorize"
 
+        state = response.cookies[settings.fief_admin_state_cookie_name]
+        assert state != ""
+        set_cookie_header = response.headers["Set-Cookie"].lower()
+        assert "httponly" in set_cookie_header
+        assert "samesite=lax" in set_cookie_header
+
         fief_client_mock.auth_url.assert_called_once_with(
             redirect_uri="http://api.fief.dev/auth/callback",
+            state=state,
             scope=["openid"],
             extras_params={"screen": "login"},
         )
@@ -43,6 +50,38 @@ class TestAuthCallback:
         response = await test_client_dashboard.get("/auth/callback")
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    @pytest.mark.parametrize(
+        "state,state_cookie",
+        [
+            pytest.param(None, None, id="Missing state and cookie"),
+            pytest.param("STATE", None, id="Missing cookie"),
+            pytest.param(None, "STATE", id="Missing state"),
+            pytest.param("STATE", "OTHER_STATE", id="State mismatch"),
+        ],
+    )
+    async def test_invalid_state(
+        self,
+        state: str | None,
+        state_cookie: str | None,
+        test_client_dashboard: httpx.AsyncClient,
+        fief_client_mock: MagicMock,
+    ):
+        params = {"code": "CODE"}
+        if state is not None:
+            params["state"] = state
+        if state_cookie is not None:
+            test_client_dashboard.cookies.set(
+                settings.fief_admin_state_cookie_name, state_cookie
+            )
+
+        response = await test_client_dashboard.get("/auth/callback", params=params)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        session_cookie = response.cookies.get(settings.fief_admin_session_cookie_name)
+        assert session_cookie is None
+        fief_client_mock.auth_callback.assert_not_called()
 
     async def test_missing_permission(
         self, test_client_dashboard: httpx.AsyncClient, fief_client_mock: MagicMock
@@ -57,8 +96,11 @@ class TestAuthCallback:
             FiefAccessTokenMissingPermission()
         )
 
+        test_client_dashboard.cookies.set(
+            settings.fief_admin_state_cookie_name, "STATE"
+        )
         response = await test_client_dashboard.get(
-            "/auth/callback", params={"code": "CODE"}
+            "/auth/callback", params={"code": "CODE", "state": "STATE"}
         )
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -79,8 +121,11 @@ class TestAuthCallback:
             )
         )
 
+        test_client_dashboard.cookies.set(
+            settings.fief_admin_state_cookie_name, "STATE"
+        )
         response = await test_client_dashboard.get(
-            "/auth/callback", params={"code": "CODE"}
+            "/auth/callback", params={"code": "CODE", "state": "STATE"}
         )
 
         assert response.status_code == status.HTTP_302_FOUND
@@ -95,6 +140,12 @@ class TestAuthCallback:
         )
         assert session_token is not None
         assert session_token.userinfo == {"email": "anne@bretagne.duchy"}
+
+        assert any(
+            header.startswith(f"{settings.fief_admin_state_cookie_name}=")
+            and "max-age=0" in header.lower()
+            for header in response.headers.get_list("Set-Cookie")
+        )
 
 
 @pytest.mark.asyncio

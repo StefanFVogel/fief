@@ -1,6 +1,7 @@
 import json
+import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from fief_client import FiefAccessTokenMissingPermission, FiefAsync
 
@@ -23,23 +24,47 @@ async def login(
     screen: str = Query("login"),
     fief: FiefAsync = Depends(get_fief),
 ):
+    state = secrets.token_urlsafe()
     url = await fief.auth_url(
         redirect_uri=str(request.url_for("dashboard.auth:callback")),
+        state=state,
         scope=["openid"],
         extras_params={"screen": screen},
     )
-    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+    response = RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+    response.set_cookie(
+        settings.fief_admin_state_cookie_name,
+        state,
+        max_age=settings.fief_admin_state_cookie_lifetime_seconds,
+        domain=settings.fief_admin_state_cookie_domain,
+        secure=settings.fief_admin_state_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+
+    return response
 
 
 @router.get("/callback", name="dashboard.auth:callback")
 async def callback(
     request: Request,
     code: str = Query(...),
+    state: str | None = Query(None),
+    state_cookie: str | None = Cookie(
+        None, alias=settings.fief_admin_state_cookie_name
+    ),
     fief: FiefAsync = Depends(get_fief),
     repository: AdminSessionTokenRepository = Depends(
         get_repository(AdminSessionTokenRepository)
     ),
 ):
+    if (
+        state is None
+        or state_cookie is None
+        or not secrets.compare_digest(state, state_cookie)
+    ):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST)
+
     tokens, userinfo = await fief.auth_callback(
         code, str(request.url_for("dashboard.auth:callback"))
     )
@@ -66,6 +91,13 @@ async def callback(
         domain=settings.fief_admin_session_cookie_domain,
         secure=settings.fief_admin_session_cookie_secure,
         httponly=True,
+    )
+    response.delete_cookie(
+        settings.fief_admin_state_cookie_name,
+        domain=settings.fief_admin_state_cookie_domain,
+        secure=settings.fief_admin_state_cookie_secure,
+        httponly=True,
+        samesite="lax",
     )
 
     return response
