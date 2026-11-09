@@ -25,9 +25,9 @@ async def get_openid_configuration(
         router: Router = request.scope["router"]
         url_path = router.url_path_for(name, **url_for_params)
 
-        x_forwarded_host = request.headers.get("X-Forwarded-Host", None)
-        host = x_forwarded_host if x_forwarded_host else request.base_url.netloc
-        base_url = request.base_url.replace(netloc=host)
+        # The scheme stays request-based: fief_client strips its own
+        # scheme://host prefix from these URLs, and Fief calls itself over http
+        base_url = request.base_url.replace(netloc=settings.fief_domain)
 
         return str(url_path.make_absolute_url(base_url))
 
