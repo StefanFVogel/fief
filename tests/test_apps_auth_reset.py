@@ -133,6 +133,31 @@ class TestPostForgotPassword:
         expected_exp = now + settings.reset_password_token_lifetime_seconds
         assert expected_exp <= claims["exp"] <= expected_exp + 5
 
+    async def test_reset_url_uses_fief_domain(
+        self,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+        send_task_mock: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(settings, "fief_domain", "auth.example.com")
+        user = test_data["users"]["regular"]
+
+        response = await test_client_auth_csrf.post(
+            "/forgot",
+            data={"email": "anne@bretagne.duchy", "csrf_token": csrf_token},
+            headers={"Host": "evil.example"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+        send_task_mock.assert_called_with(
+            on_after_forgot_password,
+            str(user.id),
+            str_match(r"^http://auth\.example\.com/reset\?token="),
+        )
+
 
 @pytest.mark.asyncio
 class TestGetResetPassword:

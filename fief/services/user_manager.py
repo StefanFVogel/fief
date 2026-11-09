@@ -364,7 +364,11 @@ class UserManager:
         self.trigger_webhooks(UserForgotPasswordRequested, user, schemas.user.UserRead)
 
         assert request is not None
-        reset_url = furl(user.tenant.url_for(request, "reset:reset"))
+        reset_url = furl(
+            user.tenant.url_path_for(request, "reset:reset").make_absolute_url(
+                request.base_url.replace(netloc=settings.fief_domain)
+            )
+        )
         reset_url.add(query_params={"token": token})
         self.send_task(
             on_after_forgot_password,
