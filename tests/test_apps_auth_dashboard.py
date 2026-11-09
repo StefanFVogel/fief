@@ -340,6 +340,37 @@ class TestAuthEmailChange:
             session=main_session,
         )
 
+    @pytest.mark.htmx()
+    async def test_post_too_many_requests(
+        self,
+        tenant_params: TenantParams,
+        csrf_token: str,
+        test_client_auth_csrf: httpx.AsyncClient,
+        send_task_mock: MagicMock,
+    ):
+        cookies = {}
+        cookies[settings.session_cookie_name] = tenant_params.session_token_token[0]
+
+        for expected_status in (
+            status.HTTP_202_ACCEPTED,
+            status.HTTP_202_ACCEPTED,
+            # htmx only swaps 400 error responses into the page
+            status.HTTP_400_BAD_REQUEST,
+        ):
+            response = await test_client_auth_csrf.post(
+                f"{tenant_params.path_prefix}/email/change",
+                cookies=cookies,
+                data={
+                    "email": "anne+updated@bretagne.duchy",
+                    "current_password": "herminetincture",
+                    "csrf_token": csrf_token,
+                },
+            )
+            assert response.status_code == expected_status
+
+        assert response.headers["X-Fief-Error"] == "too_many_attempts"
+        assert send_task_mock.call_count == 2
+
 
 @pytest.mark.asyncio
 class TestAuthEmailVerify:
@@ -404,6 +435,33 @@ class TestAuthEmailVerify:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.headers["X-Fief-Error"] == "invalid_code"
+
+    @pytest.mark.htmx()
+    async def test_post_too_many_attempts(
+        self,
+        tenant_params: TenantParams,
+        csrf_token: str,
+        test_client_auth_csrf: httpx.AsyncClient,
+    ):
+        cookies = {}
+        cookies[settings.session_cookie_name] = tenant_params.session_token_token[0]
+
+        for expected_status in (
+            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_400_BAD_REQUEST,
+        ):
+            response = await test_client_auth_csrf.post(
+                f"{tenant_params.path_prefix}/email/verify",
+                cookies=cookies,
+                data={
+                    "code": "ABCDEF",
+                    "csrf_token": csrf_token,
+                },
+            )
+            assert response.status_code == expected_status
+
+        assert response.headers["X-Fief-Error"] == "too_many_attempts"
 
     @pytest.mark.htmx()
     async def test_post_valid(

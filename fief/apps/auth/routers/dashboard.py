@@ -8,6 +8,7 @@ from fief.apps.auth.forms.profile import PF, ChangeEmailForm, get_profile_form_c
 from fief.apps.auth.forms.verify_email import VerifyEmailForm
 from fief.apps.auth.responses import HXLocationResponse
 from fief.dependencies.branding import get_show_branding
+from fief.dependencies.rate_limit import get_rate_limiter
 from fief.dependencies.session_token import (
     get_verified_email_user_from_session_token_or_verify,
 )
@@ -17,6 +18,12 @@ from fief.dependencies.users import get_user_manager, get_user_update_model
 from fief.forms import FormHelper
 from fief.locale import gettext_lazy as _
 from fief.models import Tenant, Theme, User
+from fief.services.rate_limit import (
+    RateLimiter,
+    RateLimitExceededError,
+    get_email_rate_limit_keys,
+    get_verify_code_rate_limit_keys,
+)
 from fief.services.user_manager import (
     InvalidEmailVerificationCodeError,
     UserAlreadyExistsError,
@@ -93,6 +100,7 @@ async def email_change(
     user_manager: UserManager = Depends(get_user_manager),
     context: BaseContext = Depends(get_base_context),
     tenant: Tenant = Depends(get_current_tenant),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
     form_helper = FormHelper(
         ChangeEmailForm,
@@ -121,8 +129,21 @@ async def email_change(
             )
 
         try:
+            await rate_limiter.hit(
+                get_email_rate_limit_keys(
+                    request, "verify_email", tenant.id, form.email.data
+                )
+            )
             await user_manager.request_verify_email(
                 user, form.email.data, request=request
+            )
+        except RateLimitExceededError as e:
+            return await form_helper.get_error_response(
+                _(
+                    "Too many attempts. Please try again in %(minutes)s min.",
+                    minutes=e.wait_minutes,
+                ),
+                "too_many_attempts",
             )
         except UserAlreadyExistsError:
             message = _("A user with this email address already exists.")
@@ -147,6 +168,7 @@ async def email_verify(
     user_manager: UserManager = Depends(get_user_manager),
     context: BaseContext = Depends(get_base_context),
     tenant: Tenant = Depends(get_current_tenant),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
     form_helper = FormHelper(
         VerifyEmailForm,
@@ -158,9 +180,19 @@ async def email_verify(
 
     if await form_helper.is_submitted_and_valid():
         form = await form_helper.get_form()
+        rate_limit_keys = get_verify_code_rate_limit_keys(request, user.id)
         try:
+            await rate_limiter.hit(rate_limit_keys)
             user = await user_manager.verify_email(
                 user, form.code.data, request=request
+            )
+        except RateLimitExceededError as e:
+            return await form_helper.get_error_response(
+                _(
+                    "Too many attempts. Please try again in %(minutes)s min.",
+                    minutes=e.wait_minutes,
+                ),
+                "too_many_attempts",
             )
         except InvalidEmailVerificationCodeError:
             return await form_helper.get_error_response(
@@ -171,6 +203,15 @@ async def email_verify(
                 ),
                 "invalid_code",
             )
+
+        await rate_limiter.reset(
+            [
+                *rate_limit_keys,
+                *get_email_rate_limit_keys(
+                    request, "verify_email", tenant.id, user.email
+                ),
+            ]
+        )
 
         return HXLocationResponse(
             tenant.url_for(request, "auth.dashboard:profile"),
