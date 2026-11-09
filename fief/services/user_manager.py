@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import Request
 from furl import furl
@@ -207,6 +208,8 @@ class UserManager:
             "sub": str(user.id),
             "password_fgpt": self.password_helper.hash(user.hashed_password),
             "aud": RESET_PASSWORD_TOKEN_AUDIENCE,
+            "exp": int(datetime.now(UTC).timestamp())
+            + settings.reset_password_token_lifetime_seconds,
         }
         signing_key = user.tenant.get_sign_jwk()
         token = jwt.JWT(
@@ -229,7 +232,7 @@ class UserManager:
                 jwt=token,
                 algs=["RS256"],
                 key=tenant.get_sign_jwk(),
-                check_claims={"aud": RESET_PASSWORD_TOKEN_AUDIENCE},
+                check_claims={"aud": RESET_PASSWORD_TOKEN_AUDIENCE, "exp": None},
             )
             claims = json.loads(decoded_token.claims)
         except (

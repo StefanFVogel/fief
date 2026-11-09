@@ -1,8 +1,11 @@
+import json
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
 from fastapi import status
+from furl import furl
 from jwcrypto import jwt
 
 from fief.crypto.password import password_helper
@@ -15,12 +18,19 @@ from tests.helpers import str_match
 from tests.types import TenantParams
 
 
-def generate_jwt(user: User) -> str:
+def generate_jwt(user: User, *, exp: int | None = None, with_exp: bool = True) -> str:
     claims = {
         "sub": str(user.id),
         "password_fgpt": password_helper.hash(user.hashed_password),
         "aud": RESET_PASSWORD_TOKEN_AUDIENCE,
     }
+    if with_exp:
+        claims["exp"] = (
+            exp
+            if exp is not None
+            else int(datetime.now(UTC).timestamp())
+            + settings.reset_password_token_lifetime_seconds
+        )
     signing_key = user.tenant.get_sign_jwk()
     token = jwt.JWT(header={"alg": "RS256", "kid": signing_key["kid"]}, claims=claims)
     token.make_signed_token(signing_key)
@@ -98,6 +108,31 @@ class TestPostForgotPassword:
             str_match(r"/reset.*token="),
         )
 
+    async def test_existing_user_token_expires(
+        self,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+        send_task_mock: MagicMock,
+    ):
+        user = test_data["users"]["regular"]
+
+        now = int(datetime.now(UTC).timestamp())
+        response = await test_client_auth_csrf.post(
+            "/forgot", data={"email": "anne@bretagne.duchy", "csrf_token": csrf_token}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+        reset_url = send_task_mock.call_args.args[2]
+        token = furl(reset_url).args["token"]
+        decoded_token = jwt.JWT(
+            jwt=token, algs=["RS256"], key=user.tenant.get_sign_jwk()
+        )
+        claims = json.loads(decoded_token.claims)
+        expected_exp = now + settings.reset_password_token_lifetime_seconds
+        assert expected_exp <= claims["exp"] <= expected_exp + 5
+
 
 @pytest.mark.asyncio
 class TestGetResetPassword:
@@ -162,6 +197,39 @@ class TestPostResetPassword:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @pytest.mark.parametrize(
+        "token_kwargs",
+        [
+            pytest.param(
+                {"exp": int(datetime.now(UTC).timestamp()) - 3600}, id="Expired token"
+            ),
+            pytest.param({"with_exp": False}, id="Token without expiration"),
+        ],
+    )
+    async def test_expired_or_not_expiring_token(
+        self,
+        token_kwargs: dict,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+    ):
+        user = test_data["users"]["regular"]
+        token = generate_jwt(user, **token_kwargs)
+
+        response = await test_client_auth_csrf.post(
+            "/reset",
+            data={
+                "password": "newherminetincture",
+                "token": token,
+                "csrf_token": csrf_token,
+            },
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        headers = response.headers
+        assert headers["X-Fief-Error"] == "invalid_token"
 
     async def test_valid(
         self,
