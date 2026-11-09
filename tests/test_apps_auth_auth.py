@@ -1199,6 +1199,112 @@ class TestAuthGetConsent:
         )
         assert used_login_session is None
 
+    @pytest.mark.parametrize(
+        "params",
+        [{"prompt": "login"}, {"acr_values": "1"}],
+    )
+    async def test_level_one_without_authentication(
+        self,
+        params: dict[str, str],
+        test_client_auth: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        client = test_data["clients"]["first_party_default_tenant"]
+        session_token_token = session_token_tokens["regular"][0]
+
+        response = await test_client_auth.get(
+            "/authorize",
+            params={
+                **params,
+                "response_type": "code",
+                "client_id": client.client_id,
+                "redirect_uri": "https://nantes.city/callback",
+                "scope": "openid",
+            },
+            cookies={settings.session_cookie_name: session_token_token},
+        )
+        assert response.status_code == status.HTTP_302_FOUND
+        assert response.headers["Location"].endswith("/login")
+        login_session_token = response.cookies[settings.login_session_cookie_name]
+
+        cookies = {}
+        cookies[settings.login_session_cookie_name] = login_session_token
+        cookies[settings.session_cookie_name] = session_token_token
+
+        response = await test_client_auth.get("/consent", cookies=cookies)
+
+        assert response.status_code == status.HTTP_302_FOUND
+
+        redirect_uri = response.headers["Location"]
+        assert redirect_uri.endswith("/login")
+
+        login_session_repository = LoginSessionRepository(main_session)
+        login_session = await login_session_repository.get_by_token(login_session_token)
+        assert login_session is not None
+
+    async def test_level_one_after_authentication(
+        self,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        client = test_data["clients"]["first_party_default_tenant"]
+
+        response = await test_client_auth_csrf.get(
+            "/authorize",
+            params={
+                "prompt": "login",
+                "state": "STATE",
+                "response_type": "code",
+                "client_id": client.client_id,
+                "redirect_uri": "https://nantes.city/callback",
+                "scope": "openid",
+            },
+            cookies={settings.session_cookie_name: session_token_tokens["regular"][0]},
+        )
+        assert response.status_code == status.HTTP_302_FOUND
+        login_session_token = response.cookies[settings.login_session_cookie_name]
+
+        response = await test_client_auth_csrf.post(
+            "/login",
+            data={
+                "email": "anne@bretagne.duchy",
+                "password": "herminetincture",
+                "csrf_token": csrf_token,
+            },
+            cookies={settings.login_session_cookie_name: login_session_token},
+        )
+        assert response.status_code == status.HTTP_302_FOUND
+        session_cookie = response.cookies[settings.session_cookie_name]
+
+        login_session_repository = LoginSessionRepository(main_session)
+        login_session = await login_session_repository.get_by_token(login_session_token)
+        assert login_session is not None
+        session_token_repository = SessionTokenRepository(main_session)
+        session_token = await session_token_repository.get_by_token(
+            get_token_hash(session_cookie)
+        )
+        assert session_token is not None
+
+        cookies = {}
+        cookies[settings.login_session_cookie_name] = login_session_token
+        cookies[settings.session_cookie_name] = session_cookie
+
+        response = await test_client_auth_csrf.get("/consent", cookies=cookies)
+
+        assert response.status_code == status.HTTP_302_FOUND
+
+        redirect_uri = response.headers["Location"]
+        await authorization_code_assertions(
+            redirect_uri=redirect_uri,
+            login_session=login_session,
+            session_token=session_token,
+            session=main_session,
+        )
+        assert login_session.acr == ACR.LEVEL_ONE
+
 
 @pytest.mark.asyncio
 class TestAuthPostConsent:

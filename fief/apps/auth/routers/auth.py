@@ -279,6 +279,16 @@ async def consent(
     authentication_flow: AuthenticationFlow = Depends(get_authentication_flow),
     context: BaseContext = Depends(get_base_context),
 ):
+    # Authentication was required, but the session predates this login session
+    if (
+        login_session.acr >= ACR.LEVEL_ONE
+        and session_token.created_at < login_session.created_at
+    ):
+        return RedirectResponse(
+            tenant.url_path_for(request, "auth:login"),
+            status_code=status.HTTP_302_FOUND,
+        )
+
     form_helper = FormHelper(
         ConsentForm,
         "auth/consent.html",
