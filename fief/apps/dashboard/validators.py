@@ -60,4 +60,4 @@ class FontFamilyValidator(validators.Regexp):
 class FontCSSURLValidator(validators.Regexp):
     def __init__(self, message=None):
         regex = r"^https?://[^\s'\"()\\]+\Z"
-        super().__init__(regex, re.IGNORECASE, message or "Invalid URL.")
+        super().__init__(regex, re.IGNORECASE | re.ASCII, message or "Invalid URL.")
