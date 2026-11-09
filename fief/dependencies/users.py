@@ -104,7 +104,7 @@ def current_user(
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
         try:
-            claims = read_access_token(tenant.get_sign_jwk(), token)
+            claims = read_access_token(tenant.get_sign_jwk(), tenant.get_host(), token)
             user_id = uuid.UUID(claims["sub"])
             acr_claim = ACR(claims["acr"])
             user = await user_manager.get(user_id, tenant.id)

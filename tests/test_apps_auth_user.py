@@ -8,6 +8,7 @@ import pytest_asyncio
 from fastapi import status
 
 from fief.crypto.access_token import generate_access_token
+from fief.crypto.id_token import generate_id_token
 from fief.db import AsyncSession
 from fief.errors import APIErrorCode
 from fief.repositories import EmailVerificationRepository, UserRepository
@@ -61,6 +62,70 @@ def access_token(
         return http_client
 
     return _access_token
+
+
+@pytest.fixture
+def id_token(test_data: TestData, tenant_params: TenantParams) -> str:
+    user = tenant_params.user
+    user_tenant = user.tenant
+    client = next(
+        client
+        for _, client in test_data["clients"].items()
+        if client.tenant_id == user_tenant.id
+    )
+    return generate_id_token(
+        user_tenant.get_sign_jwk(),
+        user_tenant.get_host(),
+        client,
+        datetime.now(UTC),
+        ACR.LEVEL_ONE,
+        user,
+        3600,
+    )
+
+
+@pytest.fixture
+def access_token_other_issuer(test_data: TestData, tenant_params: TenantParams) -> str:
+    user = tenant_params.user
+    user_tenant = user.tenant
+    client = next(
+        client
+        for _, client in test_data["clients"].items()
+        if client.tenant_id == user_tenant.id
+    )
+    return generate_access_token(
+        user_tenant.get_sign_jwk(),
+        "https://evil.example.com",
+        client,
+        datetime.now(UTC),
+        ACR.LEVEL_ONE,
+        user,
+        ["openid"],
+        [],
+        3600,
+    )
+
+
+@pytest.fixture
+def expired_access_token(test_data: TestData, tenant_params: TenantParams) -> str:
+    user = tenant_params.user
+    user_tenant = user.tenant
+    client = next(
+        client
+        for _, client in test_data["clients"].items()
+        if client.tenant_id == user_tenant.id
+    )
+    return generate_access_token(
+        user_tenant.get_sign_jwk(),
+        user_tenant.get_host(),
+        client,
+        datetime.now(UTC),
+        ACR.LEVEL_ONE,
+        user,
+        ["openid"],
+        [],
+        -3600,
+    )
 
 
 @pytest_asyncio.fixture
@@ -118,6 +183,51 @@ class TestUserUserinfo:
 
         json = response.json()
         assert json == user.get_claims()
+
+    async def test_id_token(
+        self,
+        method: str,
+        tenant_params: TenantParams,
+        id_token: str,
+        test_client_auth: httpx.AsyncClient,
+    ):
+        response = await test_client_auth.request(
+            method,
+            f"{tenant_params.path_prefix}/api/userinfo",
+            headers={"Authorization": f"Bearer {id_token}"},
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    async def test_other_issuer(
+        self,
+        method: str,
+        tenant_params: TenantParams,
+        access_token_other_issuer: str,
+        test_client_auth: httpx.AsyncClient,
+    ):
+        response = await test_client_auth.request(
+            method,
+            f"{tenant_params.path_prefix}/api/userinfo",
+            headers={"Authorization": f"Bearer {access_token_other_issuer}"},
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    async def test_expired(
+        self,
+        method: str,
+        tenant_params: TenantParams,
+        expired_access_token: str,
+        test_client_auth: httpx.AsyncClient,
+    ):
+        response = await test_client_auth.request(
+            method,
+            f"{tenant_params.path_prefix}/api/userinfo",
+            headers={"Authorization": f"Bearer {expired_access_token}"},
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 @pytest.mark.asyncio
@@ -257,6 +367,20 @@ class TestUserChangePassword:
 
         assert response.status_code == status.HTTP_200_OK
 
+    async def test_id_token(
+        self,
+        tenant_params: TenantParams,
+        id_token: str,
+        test_client_auth: httpx.AsyncClient,
+    ):
+        response = await test_client_auth.patch(
+            f"{tenant_params.path_prefix}/api/password",
+            headers={"Authorization": f"Bearer {id_token}"},
+            json={"password": "newherminetincture"},
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
 
 @pytest.mark.asyncio
 class TestUserChangeEmail:
@@ -344,6 +468,20 @@ class TestUserChangeEmail:
             send_task_mock=send_task_mock,
             session=main_session,
         )
+
+    async def test_id_token(
+        self,
+        tenant_params: TenantParams,
+        id_token: str,
+        test_client_auth: httpx.AsyncClient,
+    ):
+        response = await test_client_auth.patch(
+            f"{tenant_params.path_prefix}/api/email/change",
+            headers={"Authorization": f"Bearer {id_token}"},
+            json={"email": "anne+updated@bretagne.duchy"},
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 @pytest.mark.asyncio
