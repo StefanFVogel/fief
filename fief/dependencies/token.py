@@ -148,6 +148,9 @@ async def validate_grant_request(
         elif code_verifier is not None:
             raise TokenRequestException(TokenError.get_invalid_grant())
 
+        if not await authorization_code_repository.consume(authorization_code):
+            raise TokenRequestException(TokenError.get_invalid_grant())
+
         yield {
             "user_id": authorization_code.user_id,
             "scope": authorization_code.scope,
@@ -158,8 +161,6 @@ async def validate_grant_request(
             "client": client,
             "grant_type": grant_type,
         }
-
-        await authorization_code_repository.delete(authorization_code)
         return
     elif grant_type == "refresh_token":
         if refresh_token_token is None:
@@ -178,6 +179,9 @@ async def validate_grant_request(
         if not set(new_scope).issubset(set(refresh_token.scope)):
             raise TokenRequestException(TokenError.get_invalid_scope())
 
+        if not await refresh_token_repository.consume(refresh_token):
+            raise TokenRequestException(TokenError.get_invalid_grant())
+
         yield {
             "user_id": refresh_token.user_id,
             "scope": new_scope,
@@ -188,8 +192,6 @@ async def validate_grant_request(
             "client": client,
             "grant_type": grant_type,
         }
-
-        await refresh_token_repository.delete(refresh_token)
         return
 
     raise TokenRequestException(TokenError.get_unsupported_grant_type())

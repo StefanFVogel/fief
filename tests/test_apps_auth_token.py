@@ -3,10 +3,12 @@ import base64
 import httpx
 import pytest
 from fastapi import status
+from pytest_mock import MockerFixture
+from sqlalchemy import delete
 
 from fief.crypto.token import get_token_hash
 from fief.db import AsyncSession
-from fief.models import Client
+from fief.models import AuthorizationCode, Client, RefreshToken
 from fief.repositories import AuthorizationCodeRepository, RefreshTokenRepository
 from fief.services.acr import ACR
 from tests.data import (
@@ -370,6 +372,53 @@ class TestAuthTokenAuthorizationCode:
         json = response.json()
         assert json["error"] == "invalid_grant"
 
+    @pytest.mark.parametrize("auth_method", AUTH_METHODS)
+    async def test_authorization_code_consumed_concurrently(
+        self,
+        auth_method: str,
+        test_client_auth: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+        mocker: MockerFixture,
+    ):
+        authorization_code = test_data["authorization_codes"]["default_regular"]
+        authorization_code_code = authorization_code_codes["default_regular"]
+        client = authorization_code.client
+
+        get_valid_by_code = AuthorizationCodeRepository.get_valid_by_code
+
+        async def _get_valid_by_code_consumed_concurrently(
+            self: AuthorizationCodeRepository, code: str
+        ) -> AuthorizationCode | None:
+            result = await get_valid_by_code(self, code)
+            await main_session.execute(
+                delete(AuthorizationCode).where(AuthorizationCode.code == code)
+            )
+            return result
+
+        mocker.patch.object(
+            AuthorizationCodeRepository,
+            "get_valid_by_code",
+            _get_valid_by_code_consumed_concurrently,
+        )
+
+        headers, data = get_authenticated_request_headers_data(auth_method, client)
+        response = await test_client_auth.post(
+            "/api/token",
+            headers=headers,
+            data={
+                **data,
+                "grant_type": "authorization_code",
+                "code": authorization_code_code[0],
+                "redirect_uri": authorization_code.redirect_uri,
+            },
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        json = response.json()
+        assert json["error"] == "invalid_grant"
+
     @pytest.mark.parametrize(
         "authorization_code_alias",
         ["default_regular", "default_regular_nonce", "secondary_regular"],
@@ -720,6 +769,49 @@ class TestAuthTokenRefreshToken:
 
         json = response.json()
         assert json["error"] == "invalid_scope"
+
+    @pytest.mark.parametrize("auth_method", AUTH_METHODS)
+    async def test_refresh_token_consumed_concurrently(
+        self,
+        auth_method: str,
+        test_client_auth: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+        mocker: MockerFixture,
+    ):
+        refresh_token = test_data["refresh_tokens"]["default_regular"]
+        client = refresh_token.client
+
+        get_by_token = RefreshTokenRepository.get_by_token
+
+        async def _get_by_token_consumed_concurrently(
+            self: RefreshTokenRepository, token: str, *, fresh: bool = True
+        ) -> RefreshToken | None:
+            result = await get_by_token(self, token, fresh=fresh)
+            await main_session.execute(
+                delete(RefreshToken).where(RefreshToken.token == token)
+            )
+            return result
+
+        mocker.patch.object(
+            RefreshTokenRepository, "get_by_token", _get_by_token_consumed_concurrently
+        )
+
+        headers, data = get_authenticated_request_headers_data(auth_method, client)
+        response = await test_client_auth.post(
+            "/api/token",
+            headers=headers,
+            data={
+                **data,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token_tokens["default_regular"][0],
+            },
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        json = response.json()
+        assert json["error"] == "invalid_grant"
 
     @pytest.mark.parametrize("auth_method", AUTH_METHODS)
     async def test_valid(
