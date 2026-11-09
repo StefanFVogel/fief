@@ -27,7 +27,7 @@ ENV PYTHONUNBUFFERED 1
 WORKDIR /app
 
 RUN --mount=type=bind,from=wheel,source=/dist,target=/dist \
-    apt-get update && apt-get install -y build-essential redis libpq-dev \
+    apt-get update && apt-get upgrade -y && apt-get install -y build-essential redis libpq-dev \
     && pip install --upgrade pip supervisor \
     && python --version \
     && pip install /dist/*.whl \
