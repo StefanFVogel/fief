@@ -139,6 +139,7 @@ class TestUpdateEmailTemplate:
         assert subject_output_field.attrs["value"] == subject_output
         content_output_field = preview.find("iframe")
         assert content_output_field.attrs["srcdoc"] == content_output
+        assert content_output_field.attrs["sandbox"] == []
 
     @pytest.mark.parametrize(
         "subject_input,content_input",
