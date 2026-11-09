@@ -9,6 +9,7 @@ from pydantic import (
     DirectoryPath,
     EmailStr,
     Field,
+    IPvAnyNetwork,
     SecretStr,
     field_validator,
     model_validator,
@@ -137,6 +138,8 @@ class Settings(BaseSettings):
     default_refresh_token_lifetime_seconds: int = 3600 * 24 * 30
 
     webhooks_max_attempts: int = 5
+    webhooks_allowed_networks: list[IPvAnyNetwork] = []
+    webhooks_max_response_log_size: int = 4096
 
     logout_allowed_origins: list[AnyHttpUrl] = []
 
