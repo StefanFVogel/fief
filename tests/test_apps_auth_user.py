@@ -469,6 +469,33 @@ class TestUserChangeEmail:
             session=main_session,
         )
 
+    @pytest.mark.access_token(user="regular", acr=ACR.LEVEL_ONE)
+    async def test_too_many_requests(
+        self,
+        test_data: TestData,
+        test_client_auth_access_token: httpx.AsyncClient,
+        send_task_mock: MagicMock,
+    ):
+        user = test_data["users"]["regular"]
+        tenant = user.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
+
+        for expected_status in (
+            status.HTTP_202_ACCEPTED,
+            status.HTTP_202_ACCEPTED,
+            status.HTTP_429_TOO_MANY_REQUESTS,
+        ):
+            response = await test_client_auth_access_token.patch(
+                f"{path_prefix}/api/email/change",
+                json={"email": "anne+updated@bretagne.duchy"},
+            )
+            assert response.status_code == expected_status
+
+        json = response.json()
+        assert json["detail"] == APIErrorCode.USER_UPDATE_TOO_MANY_ATTEMPTS
+        assert response.headers["Retry-After"] == "60"
+        assert send_task_mock.call_count == 2
+
     async def test_id_token(
         self,
         tenant_params: TenantParams,
@@ -546,6 +573,44 @@ class TestUserVerifyEmail:
         assert (
             json["detail"] == APIErrorCode.USER_UPDATE_INVALID_EMAIL_VERIFICATION_CODE
         )
+
+    @pytest.mark.access_token(user="regular", acr=ACR.LEVEL_ONE)
+    async def test_too_many_attempts(
+        self,
+        test_data: TestData,
+        test_client_auth_access_token: httpx.AsyncClient,
+        rate_limiter_clock: MagicMock,
+    ):
+        user = test_data["users"]["regular"]
+        code = email_verification_codes["regular_update_email"][0]
+        tenant = user.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
+
+        for expected_status in (
+            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_429_TOO_MANY_REQUESTS,
+        ):
+            response = await test_client_auth_access_token.post(
+                f"{path_prefix}/api/email/verify",
+                json={"code": "ABCDEF"},
+            )
+            assert response.status_code == expected_status
+
+        response = await test_client_auth_access_token.post(
+            f"{path_prefix}/api/email/verify",
+            json={"code": code},
+        )
+        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+        assert response.json()["detail"] == APIErrorCode.USER_UPDATE_TOO_MANY_ATTEMPTS
+
+        rate_limiter_clock.return_value += 60
+
+        response = await test_client_auth_access_token.post(
+            f"{path_prefix}/api/email/verify",
+            json={"code": code},
+        )
+        assert response.status_code == status.HTTP_200_OK
 
     @pytest.mark.access_token(user="regular", acr=ACR.LEVEL_ONE)
     async def test_valid(

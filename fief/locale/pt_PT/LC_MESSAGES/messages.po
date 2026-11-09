@@ -30,6 +30,10 @@ msgstr "Iniciar sessão"
 msgid "Invalid email or password"
 msgstr "Password ou Email inválidos"
 
+#, python-format
+msgid "Too many attempts. Please try again in %(minutes)s min."
+msgstr "Demasiadas tentativas. Tente novamente dentro de %(minutes)s min."
+
 #: fief/apps/auth/routers/register.py:90
 msgid "A user with the same email address already exists."
 msgstr "Já existe um utilizador com o mesmo email"

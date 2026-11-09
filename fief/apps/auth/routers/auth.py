@@ -29,6 +29,7 @@ from fief.dependencies.auth import (
 from fief.dependencies.authentication_flow import get_authentication_flow
 from fief.dependencies.login_hint import LoginHint, get_login_hint
 from fief.dependencies.oauth_provider import get_oauth_providers
+from fief.dependencies.rate_limit import get_rate_limiter
 from fief.dependencies.repositories import get_repository
 from fief.dependencies.session_token import (
     get_session_token,
@@ -45,6 +46,13 @@ from fief.models.session_token import SessionToken
 from fief.repositories.session_token import SessionTokenRepository
 from fief.services.acr import ACR
 from fief.services.authentication_flow import AuthenticationFlow
+from fief.services.rate_limit import (
+    RateLimiter,
+    RateLimitExceededError,
+    get_email_rate_limit_keys,
+    get_login_rate_limit_keys,
+    get_verify_code_rate_limit_keys,
+)
 from fief.services.user_manager import InvalidEmailVerificationCodeError, UserManager
 from fief.settings import settings
 
@@ -143,6 +151,7 @@ async def login(
     login_hint: LoginHint | None = Depends(get_login_hint),
     tenant: Tenant = Depends(get_current_tenant),
     context: BaseContext = Depends(get_base_context),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
     # Prefill email with login_hint if it's a string
     initial_form_data = None
@@ -165,6 +174,19 @@ async def login(
     form = await form_helper.get_form()
 
     if await form_helper.is_submitted_and_valid():
+        rate_limit_keys = get_login_rate_limit_keys(request, tenant.id, form.email.data)
+        try:
+            await rate_limiter.hit(rate_limit_keys)
+        except RateLimitExceededError as e:
+            return await form_helper.get_error_response(
+                _(
+                    "Too many attempts. Please try again in %(minutes)s min.",
+                    minutes=e.wait_minutes,
+                ),
+                "too_many_attempts",
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
         user = await user_manager.authenticate(
             form.email.data, form.password.data, tenant.id
         )
@@ -172,6 +194,8 @@ async def login(
             return await form_helper.get_error_response(
                 _("Invalid email or password"), "bad_credentials"
             )
+
+        await rate_limiter.reset(rate_limit_keys)
 
         response = RedirectResponse(
             tenant.url_path_for(request, "auth:verify_email_request"),
@@ -194,6 +218,7 @@ async def verify_email_request(
     user: User = Depends(get_user_from_session_token_or_login),
     user_manager: UserManager = Depends(get_user_manager),
     tenant: Tenant = Depends(get_current_tenant),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
     if user.email_verified:
         if login_session is not None:
@@ -208,7 +233,14 @@ async def verify_email_request(
             )
         return response
 
-    await user_manager.request_verify_email(user, user.email)
+    try:
+        await rate_limiter.hit(
+            get_email_rate_limit_keys(request, "verify_email", tenant.id, user.email)
+        )
+        await user_manager.request_verify_email(user, user.email)
+    except RateLimitExceededError:
+        # Keep the previous code valid and let the user enter it
+        pass
 
     return RedirectResponse(
         tenant.url_path_for(request, "auth:verify_email"),
@@ -224,6 +256,7 @@ async def verify_email(
     user_manager: UserManager = Depends(get_user_manager),
     tenant: Tenant = Depends(get_current_tenant),
     context: BaseContext = Depends(get_base_context),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
     form_helper = FormHelper(
         VerifyEmailForm,
@@ -234,9 +267,20 @@ async def verify_email(
     form = await form_helper.get_form()
 
     if await form_helper.is_submitted_and_valid():
+        rate_limit_keys = get_verify_code_rate_limit_keys(request, user.id)
         try:
+            await rate_limiter.hit(rate_limit_keys)
             user = await user_manager.verify_email(
                 user, form.code.data, request=request
+            )
+        except RateLimitExceededError as e:
+            return await form_helper.get_error_response(
+                _(
+                    "Too many attempts. Please try again in %(minutes)s min.",
+                    minutes=e.wait_minutes,
+                ),
+                "too_many_attempts",
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             )
         except InvalidEmailVerificationCodeError:
             return await form_helper.get_error_response(
@@ -247,6 +291,15 @@ async def verify_email(
                 ),
                 "invalid_code",
             )
+
+        await rate_limiter.reset(
+            [
+                *rate_limit_keys,
+                *get_email_rate_limit_keys(
+                    request, "verify_email", tenant.id, user.email
+                ),
+            ]
+        )
 
         if login_session is not None:
             response = RedirectResponse(

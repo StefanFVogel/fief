@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
+from fief.dependencies.rate_limit import get_rate_limiter
 from fief.dependencies.users import (
     current_active_user,
     current_active_user_acr_level_1,
@@ -16,6 +17,12 @@ from fief.schemas.user import (
     UserChangePassword,
     UserUpdate,
     UserVerifyEmail,
+)
+from fief.services.rate_limit import (
+    RateLimiter,
+    RateLimitExceededError,
+    get_email_rate_limit_keys,
+    get_verify_code_rate_limit_keys,
 )
 from fief.services.user_manager import (
     InvalidEmailVerificationCodeError,
@@ -95,11 +102,23 @@ async def email_change(
     change_email: UserChangeEmail,
     user: User = Depends(current_active_user_acr_level_1),
     user_manager: UserManager = Depends(get_user_manager),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
     try:
+        await rate_limiter.hit(
+            get_email_rate_limit_keys(
+                request, "verify_email", user.tenant_id, change_email.email
+            )
+        )
         await user_manager.request_verify_email(
             user, change_email.email, request=request
         )
+    except RateLimitExceededError as e:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=APIErrorCode.USER_UPDATE_TOO_MANY_ATTEMPTS,
+            headers={"Retry-After": str(e.wait_seconds)},
+        ) from e
     except UserAlreadyExistsError as e:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -115,15 +134,32 @@ async def email_verify(
     verify_email: UserVerifyEmail,
     user: User = Depends(current_active_user_acr_level_1),
     user_manager: UserManager = Depends(get_user_manager),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
+    rate_limit_keys = get_verify_code_rate_limit_keys(request, user.id)
     try:
+        await rate_limiter.hit(rate_limit_keys)
         user = await user_manager.verify_email(
             user, verify_email.code.get_secret_value(), request=request
         )
+    except RateLimitExceededError as e:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=APIErrorCode.USER_UPDATE_TOO_MANY_ATTEMPTS,
+            headers={"Retry-After": str(e.wait_seconds)},
+        ) from e
     except InvalidEmailVerificationCodeError as e:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail=APIErrorCode.USER_UPDATE_INVALID_EMAIL_VERIFICATION_CODE,
         ) from e
     else:
+        await rate_limiter.reset(
+            [
+                *rate_limit_keys,
+                *get_email_rate_limit_keys(
+                    request, "verify_email", user.tenant_id, user.email
+                ),
+            ]
+        )
         return user.get_claims()
