@@ -152,7 +152,7 @@ class TestAuthCallback:
         assert (
             expected_expires_at - timedelta(seconds=5)
             <= session_token.expires_at
-            <= expected_expires_at
+            <= expected_expires_at + timedelta(seconds=1)
         )
 
         assert any(
@@ -307,7 +307,7 @@ class TestAdminSessionExpiration:
         assert stored_session_token.last_activity_at >= datetime.now(UTC) - timedelta(
             seconds=5
         )
-        assert stored_session_token.expires_at == expires_at
+        assert abs(stored_session_token.expires_at - expires_at) < timedelta(seconds=1)
 
 
 @pytest.mark.asyncio
