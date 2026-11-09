@@ -8,6 +8,8 @@ from jwcrypto.common import JWException
 from fief.models import Client, User
 from fief.services.acr import ACR
 
+ACCESS_TOKEN_TYPE = "at+jwt"
+
 
 class InvalidAccessToken(Exception):
     pass
@@ -40,15 +42,24 @@ def generate_access_token(
         "permissions": permissions,
     }
 
-    token = jwt.JWT(header={"alg": "RS256", "kid": key["kid"]}, claims=claims)
+    token = jwt.JWT(
+        header={"alg": "RS256", "kid": key["kid"], "typ": ACCESS_TOKEN_TYPE},
+        claims=claims,
+    )
     token.make_signed_token(key)
 
     return token.serialize()
 
 
-def read_access_token(key: jwk.JWK, token: str) -> dict[str, Any]:
+def read_access_token(key: jwk.JWK, host: str, token: str) -> dict[str, Any]:
     try:
-        decoded_jwt = jwt.JWT(jwt=token, key=key)
-        return json.loads(decoded_jwt.claims)
+        decoded_jwt = jwt.JWT(
+            jwt=token, key=key, check_claims={"iss": host, "exp": None}
+        )
     except JWException as e:
         raise InvalidAccessToken() from e
+
+    if decoded_jwt.token.jose_header.get("typ") != ACCESS_TOKEN_TYPE:
+        raise InvalidAccessToken()
+
+    return json.loads(decoded_jwt.claims)
