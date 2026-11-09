@@ -301,15 +301,19 @@ class TestOAuthCallback:
         assert headers["X-Fief-Error"] == error
 
     @pytest.mark.parametrize(
-        "oauth_session_cookie",
+        "oauth_session_cookie,state",
         [
-            pytest.param(None, id="Missing OAuth session cookie"),
-            pytest.param("INVALID_OAUTH_SESSION", id="Invalid OAuth session cookie"),
+            pytest.param(None, None, id="Missing OAuth session cookie"),
+            pytest.param(
+                "INVALID_OAUTH_SESSION", None, id="Invalid OAuth session cookie"
+            ),
+            pytest.param("STATE", "ÉTAT", id="Non-ASCII state"),
         ],
     )
     async def test_invalid_oauth_session_cookie(
         self,
         oauth_session_cookie: str | None,
+        state: str | None,
         mocker: MockerFixture,
         test_client_auth: httpx.AsyncClient,
         test_data: TestData,
@@ -331,7 +335,7 @@ class TestOAuthCallback:
             params={
                 "code": "CODE",
                 "redirect_uri": oauth_session.redirect_uri,
-                "state": oauth_session.token,
+                "state": state if state is not None else oauth_session.token,
             },
             cookies=cookies,
         )
@@ -348,6 +352,7 @@ class TestOAuthCallback:
         mocker: MockerFixture,
         test_client_auth: httpx.AsyncClient,
         test_data: TestData,
+        main_session: AsyncSession,
     ):
         login_session = test_data["login_sessions"]["default"]
         oauth_session = test_data["oauth_sessions"]["default_google"]
@@ -378,6 +383,9 @@ class TestOAuthCallback:
 
         headers = response.headers
         assert headers["X-Fief-Error"] == "access_token_error"
+
+        oauth_session_repository = OAuthSessionRepository(main_session)
+        assert await oauth_session_repository.get_by_token(oauth_session.token) is None
 
     async def test_get_id_email_error(
         self,

@@ -72,7 +72,9 @@ def add_commands(app: typer.Typer) -> typer.Typer:
                     "LOGIN_SESSION_COOKIE_SECURE": False,
                     "REGISTRATION_SESSION_COOKIE_SECURE": False,
                     "SESSION_COOKIE_SECURE": False,
+                    "OAUTH_SESSION_COOKIE_SECURE": False,
                     "FIEF_ADMIN_SESSION_COOKIE_SECURE": False,
+                    "FIEF_ADMIN_STATE_COOKIE_SECURE": False,
                 }
             )
 

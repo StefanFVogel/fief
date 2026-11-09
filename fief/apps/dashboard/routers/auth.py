@@ -61,7 +61,7 @@ async def callback(
     if (
         state is None
         or state_cookie is None
-        or not secrets.compare_digest(state, state_cookie)
+        or not secrets.compare_digest(state.encode(), state_cookie.encode())
     ):
         raise HTTPException(status.HTTP_400_BAD_REQUEST)
 

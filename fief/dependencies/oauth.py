@@ -106,7 +106,7 @@ async def get_oauth_session(
         await oauth_session_repository.get_by_token(state)
         if state is not None
         and oauth_session_cookie is not None
-        and secrets.compare_digest(state, oauth_session_cookie)
+        and secrets.compare_digest(state.encode(), oauth_session_cookie.encode())
         else None
     )
     if oauth_session is None:

@@ -58,6 +58,7 @@ class TestAuthCallback:
             pytest.param("STATE", None, id="Missing cookie"),
             pytest.param(None, "STATE", id="Missing state"),
             pytest.param("STATE", "OTHER_STATE", id="State mismatch"),
+            pytest.param("ÉTAT", "STATE", id="Non-ASCII state"),
         ],
     )
     async def test_invalid_state(
