@@ -30,16 +30,22 @@ from fief.services.email_template.renderers import (
 )
 from fief.settings import settings
 
-redis_parameters = urlparse(settings.redis_url)
-redis_broker = RedisBroker(
-    host=redis_parameters.hostname,
-    port=redis_parameters.port,
-    username=redis_parameters.username,
-    password=redis_parameters.password,
-    # Heroku Redis with TLS use self-signed certs, so we need to tinker a bit
-    ssl=redis_parameters.scheme == "rediss",
-    ssl_cert_reqs=None,
-)
+
+def create_redis_broker(redis_url: str, ssl_cert_reqs: str) -> RedisBroker:
+    redis_parameters = urlparse(redis_url)
+    return RedisBroker(
+        host=redis_parameters.hostname,
+        port=redis_parameters.port,
+        username=redis_parameters.username,
+        password=redis_parameters.password,
+        ssl=redis_parameters.scheme == "rediss",
+        # Certificates are verified by default. Providers with self-signed certs
+        # (e.g. Heroku Redis) can relax it with REDIS_SSL_CERT_REQS.
+        ssl_cert_reqs=ssl_cert_reqs,
+    )
+
+
+redis_broker = create_redis_broker(settings.redis_url, settings.redis_ssl_cert_reqs)
 redis_broker.add_middleware(CurrentMessage())
 dramatiq.set_broker(redis_broker)
 
