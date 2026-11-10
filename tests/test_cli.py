@@ -66,3 +66,36 @@ def test_run_worker_forwards_to_dramatiq():
     assert dramatiq_args.broker == "fief.worker"
     assert dramatiq_args.processes == 1
     assert dramatiq_args.threads == 1
+
+
+def test_info_masks_sensitive_settings(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "database_password", "db-password-value")
+    monkeypatch.setattr(settings, "fief_client_secret", "client-secret-value")
+    monkeypatch.setattr(settings, "fief_encryption_key", "fief-encryption-key-value")
+    monkeypatch.setattr(
+        settings, "redis_url", "redis://user:redis-password-value@redis-host:6379"
+    )
+    monkeypatch.setattr(
+        settings, "email_provider_params", {"api_key": "email-api-key-value"}
+    )
+
+    result = CliRunner().invoke(app, ["info"])
+
+    assert result.exit_code == 0, result.output
+    for secret_value in [
+        "db-password-value",
+        "client-secret-value",
+        "fief-encryption-key-value",
+        "redis-password-value",
+        "email-api-key-value",
+        settings.encryption_key.decode(),
+        settings.secret.get_secret_value(),
+    ]:
+        assert secret_value not in result.output
+    assert "redis_url: redis://user:**********@redis-host:6379" in result.output
+    assert f"fief_client_id: {settings.fief_client_id}" in result.output
+    assert f"port: {settings.port}" in result.output
+    assert (
+        "reset_password_token_lifetime_seconds: "
+        f"{settings.reset_password_token_lifetime_seconds}"
+    ) in result.output
