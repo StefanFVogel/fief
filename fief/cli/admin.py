@@ -7,6 +7,7 @@ import typer
 import uvicorn
 from dramatiq import cli as dramatiq_cli
 from pydantic import SecretStr
+from sqlalchemy.engine import URL
 
 from fief import __version__
 from fief.db.main import create_main_engine
@@ -38,6 +39,26 @@ SENSITIVE_SETTING_NAME_REGEX = re.compile(
     r"(^|_)(secret|password|key|token|dsn|params)(_|$)"
 )
 URL_CREDENTIALS_REGEX = re.compile(r"(://[^:@/]*:)[^/]*@")
+SQLITE_FILE_SUFFIXES = ["", "-wal", "-shm", "-journal"]
+
+
+def chown_sqlite_database(url: URL) -> None:
+    """
+    Give the SQLite database files to the owner of their directory.
+
+    Migrations run as root (e.g. through `docker exec`) would otherwise
+    leave a database the unprivileged server user can't write to.
+    """
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        return
+    if url.get_backend_name() != "sqlite" or not url.database:
+        return
+
+    directory_stat = os.stat(os.path.dirname(os.path.abspath(url.database)))
+    for suffix in SQLITE_FILE_SUFFIXES:
+        path = f"{url.database}{suffix}"
+        if os.path.exists(path):
+            os.chown(path, directory_stat.st_uid, directory_stat.st_gid)
 
 
 def mask_setting_value(key: str, value):
@@ -138,6 +159,7 @@ def add_commands(app: typer.Typer) -> typer.Typer:
         """
         await migrate_schema(engine)
         await initializer.init_all()
+        chown_sqlite_database(engine.url)
 
     @app.command(
         "run-server",
