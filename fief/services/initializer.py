@@ -13,7 +13,9 @@ from fief.repositories import (
     EmailTemplateRepository,
     EmailVerificationRepository,
     PermissionRepository,
+    RefreshTokenRepository,
     RoleRepository,
+    SessionTokenRepository,
     TenantRepository,
     ThemeRepository,
     UserFieldRepository,
@@ -96,6 +98,8 @@ class Initializer:
             user_manager = await get_user_manager(
                 user_repository,
                 email_verification_repository,
+                SessionTokenRepository(session),
+                RefreshTokenRepository(session),
                 user_fields,
                 send_task,
                 audit_logger,

@@ -8,8 +8,9 @@ from fastapi import status
 from fief.db import AsyncSession
 from fief.repositories import EmailVerificationRepository, UserRepository
 from fief.settings import settings
+from tests.conftest import create_session_token
 from tests.data import TestData, email_verification_codes, session_token_tokens
-from tests.helpers import email_verification_requested_assertions
+from tests.helpers import email_verification_requested_assertions, get_user_tokens
 from tests.types import TenantParams
 
 
@@ -33,6 +34,14 @@ class TestAuthUpdateProfile:
 
         cookies = {}
         cookies[settings.session_cookie_name] = session_token[0]
+        response = await test_client_auth_csrf.get("/", cookies=cookies)
+
+        assert response.status_code == status.HTTP_307_TEMPORARY_REDIRECT
+        assert response.headers["Location"] == "http://api.fief.dev/login"
+
+    async def test_inactive_user(self, test_client_auth_csrf: httpx.AsyncClient):
+        cookies = {}
+        cookies[settings.session_cookie_name] = session_token_tokens["inactive"][0]
         response = await test_client_auth_csrf.get("/", cookies=cookies)
 
         assert response.status_code == status.HTTP_307_TEMPORARY_REDIRECT
@@ -219,6 +228,51 @@ class TestAuthUpdatePassword:
         )
 
         assert response.status_code == status.HTTP_200_OK
+
+    @pytest.mark.htmx()
+    async def test_update_valid_revokes_other_sessions(
+        self,
+        tenant_params: TenantParams,
+        csrf_token: str,
+        test_client_auth_csrf: httpx.AsyncClient,
+        main_session: AsyncSession,
+    ):
+        _, other_token = await create_session_token(tenant_params.user, main_session)
+
+        cookies = {}
+        cookies[settings.session_cookie_name] = tenant_params.session_token_token[0]
+        response = await test_client_auth_csrf.post(
+            f"{tenant_params.path_prefix}/password",
+            cookies=cookies,
+            data={
+                "old_password": "herminetincture",
+                "new_password": "newherminetincture",
+                "new_password_confirm": "newherminetincture",
+                "csrf_token": csrf_token,
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+        session_tokens, refresh_tokens = await get_user_tokens(
+            main_session, tenant_params.user
+        )
+        assert [session_token.id for session_token in session_tokens] == [
+            tenant_params.session_token.id
+        ]
+        assert refresh_tokens == []
+
+        response = await test_client_auth_csrf.get(
+            f"{tenant_params.path_prefix}/password", cookies=cookies
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        other_cookies = {}
+        other_cookies[settings.session_cookie_name] = other_token
+        response = await test_client_auth_csrf.get(
+            f"{tenant_params.path_prefix}/password", cookies=other_cookies
+        )
+        assert response.status_code == status.HTTP_307_TEMPORARY_REDIRECT
 
 
 @pytest.mark.asyncio

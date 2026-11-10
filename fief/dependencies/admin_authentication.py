@@ -18,7 +18,7 @@ async def is_authenticated_admin_session(
     get_user_permissions: UserPermissionsGetter = Depends(get_user_permissions_getter),
 ):
     user = await user_repository.get_by_id(session_token.user_id)
-    if user is None:
+    if user is None or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_307_TEMPORARY_REDIRECT,
             headers={"Location": str(request.url_for("dashboard.auth:login"))},

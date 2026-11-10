@@ -8,12 +8,14 @@ from fief_client import FiefAccessTokenMissingPermission
 
 from fief.crypto.token import get_token_hash
 from fief.db import AsyncSession
-from fief.repositories import AdminSessionTokenRepository
+from fief.models import UserPermission
+from fief.repositories import AdminSessionTokenRepository, UserRepository
+from fief.services.admin import ADMIN_PERMISSION_CODENAME
 from fief.settings import settings
 from fief.settings_class import Settings
 from tests.conftest import create_admin_session_token
 from tests.data import TestData
-from tests.helpers import HTTPXResponseAssertion
+from tests.helpers import HTTPXResponseAssertion, dashboard_unauthorized_assertions
 
 
 @pytest.mark.asyncio
@@ -389,3 +391,31 @@ class TestAuthLogout:
 
         assert response.status_code == status.HTTP_302_FOUND
         assert response.headers["Location"] == "http://api.fief.dev/admin/"
+
+
+@pytest.mark.asyncio
+class TestAdminSessionInactiveUser:
+    async def test_inactive_admin(
+        self,
+        test_client_dashboard: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        user = await UserRepository(main_session).get_by_id(
+            test_data["users"]["inactive"].id
+        )
+        assert user is not None
+        main_session.add(
+            UserPermission(
+                user_id=user.id,
+                permission_id=test_data["permissions"][ADMIN_PERMISSION_CODENAME].id,
+            )
+        )
+        _, token = await create_admin_session_token(user, main_session)
+        test_client_dashboard.cookies.set(
+            settings.fief_admin_session_cookie_name, token
+        )
+
+        response = await test_client_dashboard.get("/users/")
+
+        dashboard_unauthorized_assertions(response)

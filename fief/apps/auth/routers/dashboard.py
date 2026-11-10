@@ -10,6 +10,7 @@ from fief.apps.auth.responses import HXLocationResponse
 from fief.dependencies.branding import get_show_branding
 from fief.dependencies.rate_limit import get_rate_limiter
 from fief.dependencies.session_token import (
+    get_session_token_or_login,
     get_verified_email_user_from_session_token_or_verify,
 )
 from fief.dependencies.tenant import get_current_tenant
@@ -17,7 +18,7 @@ from fief.dependencies.theme import get_current_theme
 from fief.dependencies.users import get_user_manager, get_user_update_model
 from fief.forms import FormHelper
 from fief.locale import gettext_lazy as _
-from fief.models import Tenant, Theme, User
+from fief.models import SessionToken, Tenant, Theme, User
 from fief.services.rate_limit import (
     RateLimiter,
     RateLimitExceededError,
@@ -225,6 +226,7 @@ async def update_password(
     request: Request,
     hx_trigger: str | None = Header(None),
     user: User = Depends(get_verified_email_user_from_session_token_or_verify),
+    session_token: SessionToken = Depends(get_session_token_or_login),
     user_manager: UserManager = Depends(get_user_manager),
     context: BaseContext = Depends(get_base_context),
 ):
@@ -259,8 +261,9 @@ async def update_password(
             form.new_password.errors.append(message)
             return await form_helper.get_error_response(message, "passwords_dont_match")
 
-        user = await user_manager.set_user_attributes(user, password=new_password)
-        await user_manager.user_repository.update(user)
+        user = await user_manager.change_password(
+            new_password, user, session_token=session_token, request=request
+        )
 
         form_helper.context["success"] = _(
             "Your password has been changed successfully."

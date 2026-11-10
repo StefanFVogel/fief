@@ -16,12 +16,18 @@ from fief.logger import AuditLogger
 from fief.models import (
     AuditLogMessage,
     EmailVerification,
+    SessionToken,
     Tenant,
     User,
     UserField,
     UserFieldValue,
 )
-from fief.repositories import EmailVerificationRepository, UserRepository
+from fief.repositories import (
+    EmailVerificationRepository,
+    RefreshTokenRepository,
+    SessionTokenRepository,
+    UserRepository,
+)
 from fief.services.password import PasswordValidation
 from fief.services.user_roles import UserRolesService
 from fief.services.webhooks.models import (
@@ -80,6 +86,8 @@ class UserManager:
         password_helper: PasswordHelper,
         user_repository: UserRepository,
         email_verification_repository: EmailVerificationRepository,
+        session_token_repository: SessionTokenRepository,
+        refresh_token_repository: RefreshTokenRepository,
         user_fields: list[UserField],
         send_task: SendTask,
         audit_logger: AuditLogger,
@@ -89,6 +97,8 @@ class UserManager:
         self.password_helper = password_helper
         self.user_repository = user_repository
         self.email_verification_repository = email_verification_repository
+        self.session_token_repository = session_token_repository
+        self.refresh_token_repository = refresh_token_repository
         self.user_fields = user_fields
         self.send_task = send_task
         self.audit_logger = audit_logger
@@ -271,6 +281,7 @@ class UserManager:
 
         user = await self.set_user_attributes(user, password=password)
         await self.user_repository.update(user)
+        await self.revoke_tokens(user)
 
         await self.on_after_reset_password(user, request=request)
 
@@ -283,6 +294,8 @@ class UserManager:
         *,
         request: Request | None = None,
     ) -> User:
+        hashed_password = user.hashed_password
+        is_active = user.is_active
         user = await self.set_user_attributes(
             user, **user_update.model_dump(exclude_unset=True, exclude={"fields"})
         )
@@ -313,6 +326,10 @@ class UserManager:
                             user.user_field_values.append(user_field_value)
 
         await self.user_repository.update(user)
+        if user.hashed_password != hashed_password or (
+            is_active and not user.is_active
+        ):
+            await self.revoke_tokens(user)
         await self.on_after_update(user, request=request)
 
         return user
@@ -322,12 +339,23 @@ class UserManager:
         password: str,
         user: User,
         *,
+        session_token: SessionToken | None = None,
         request: Request | None = None,
     ) -> User:
         user = await self.set_user_attributes(user, password=password)
         await self.user_repository.update(user)
+        await self.revoke_tokens(user, keep_session_token=session_token)
         await self.on_after_update(user, request=request)
         return user
+
+    async def revoke_tokens(
+        self, user: User, *, keep_session_token: SessionToken | None = None
+    ) -> None:
+        await self.session_token_repository.delete_by_user(
+            user.id,
+            exclude=keep_session_token.id if keep_session_token is not None else None,
+        )
+        await self.refresh_token_repository.delete_by_user(user.id)
 
     async def on_after_register(self, user: User, *, request: Request | None = None):
         self.audit_logger(AuditLogMessage.USER_REGISTERED, subject_user_id=user.id)

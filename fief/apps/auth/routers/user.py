@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from fief.dependencies.rate_limit import get_rate_limiter
+from fief.dependencies.session_token import get_session_token
 from fief.dependencies.users import (
     current_active_user,
     current_active_user_acr_level_1,
@@ -10,7 +11,7 @@ from fief.dependencies.users import (
     get_user_update,
 )
 from fief.errors import APIErrorCode
-from fief.models import User
+from fief.models import SessionToken, User
 from fief.schemas.user import (
     UF,
     UserChangeEmail,
@@ -75,11 +76,15 @@ async def change_password(
     request: Request,
     change_password: UserChangePassword,
     user: User = Depends(current_active_user_acr_level_1),
+    session_token: SessionToken | None = Depends(get_session_token),
     user_manager: UserManager = Depends(get_user_manager),
 ):
     try:
         user = await user_manager.change_password(
-            change_password.password.get_secret_value(), user, request=request
+            change_password.password.get_secret_value(),
+            user,
+            session_token=session_token,
+            request=request,
         )
     except InvalidPasswordError as e:
         # Build a JSON response manually to fine-tune the response structure

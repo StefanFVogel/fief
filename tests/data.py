@@ -653,6 +653,7 @@ authorization_code_codes: Mapping[str, tuple[str, str]] = {
     "default_public_regular_no_code_challenge": generate_token(),
     "default_public_regular_code_challenge_s256": generate_token(),
     "default_id_token_encryption": generate_token(),
+    "default_inactive": generate_token(),
 }
 
 authorization_codes: ModelMapping[AuthorizationCode] = {
@@ -770,6 +771,16 @@ authorization_codes: ModelMapping[AuthorizationCode] = {
             "encryption_default_tenant"
         ].get_authorization_code_expires_at(),
     ),
+    "default_inactive": AuthorizationCode(
+        code=authorization_code_codes["default_inactive"][1],
+        c_hash=get_validation_hash(authorization_code_codes["default_inactive"][0]),
+        redirect_uri="https://bretagne.duchy/callback",
+        user=users["inactive"],
+        client=clients["default_tenant"],
+        scope=["openid", "offline_access"],
+        authenticated_at=now,
+        expires_at=clients["default_tenant"].get_authorization_code_expires_at(),
+    ),
 }
 
 email_verification_codes: Mapping[str, tuple[str, str]] = {
@@ -794,6 +805,7 @@ email_verifications: ModelMapping[EmailVerification] = {
 refresh_token_tokens: Mapping[str, tuple[str, str]] = {
     "default_regular": generate_token(),
     "default_public_regular": generate_token(),
+    "default_inactive": generate_token(),
 }
 
 refresh_tokens: ModelMapping[RefreshToken] = {
@@ -813,12 +825,21 @@ refresh_tokens: ModelMapping[RefreshToken] = {
         authenticated_at=now,
         expires_at=clients["default_tenant"].get_refresh_token_expires_at(),
     ),
+    "default_inactive": RefreshToken(
+        token=refresh_token_tokens["default_inactive"][1],
+        user=users["inactive"],
+        client=clients["default_tenant"],
+        scope=["openid", "offline_access"],
+        authenticated_at=now,
+        expires_at=clients["default_tenant"].get_refresh_token_expires_at(),
+    ),
 }
 
 session_token_tokens: Mapping[str, tuple[str, str]] = {
     "regular": generate_token(),
     "regular_secondary": generate_token(),
     "not_verified_email": generate_token(),
+    "inactive": generate_token(),
 }
 
 session_tokens: ModelMapping[SessionToken] = {
@@ -833,6 +854,10 @@ session_tokens: ModelMapping[SessionToken] = {
     "not_verified_email": SessionToken(
         token=session_token_tokens["not_verified_email"][1],
         user=users["not_verified_email"],
+    ),
+    "inactive": SessionToken(
+        token=session_token_tokens["inactive"][1],
+        user=users["inactive"],
     ),
 }
 

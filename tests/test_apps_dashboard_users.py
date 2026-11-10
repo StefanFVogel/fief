@@ -21,6 +21,7 @@ from tests.data import TestData
 from tests.helpers import (
     HTTPXResponseAssertion,
     email_verification_requested_assertions,
+    get_user_tokens,
 )
 
 
@@ -356,6 +357,31 @@ class TestUpdateUser:
 
         assert updated_user.fields["onboarding_done"] is True
         assert updated_user.fields["last_seen"] is not None
+
+    @pytest.mark.authenticated_admin(mode="session")
+    @pytest.mark.htmx(target="modal")
+    async def test_password_revokes_tokens(
+        self,
+        test_client_dashboard: httpx.AsyncClient,
+        test_data: TestData,
+        csrf_token: str,
+        main_session: AsyncSession,
+    ):
+        user = test_data["users"]["regular"]
+        response = await test_client_dashboard.post(
+            f"/users/{user.id}/edit",
+            data={
+                "email": user.email,
+                "password": "newherminetincture",
+                "csrf_token": csrf_token,
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+        session_tokens, refresh_tokens = await get_user_tokens(main_session, user)
+        assert session_tokens == []
+        assert refresh_tokens == []
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 from typing import cast
 
+from pydantic import UUID4
 from sqlalchemy import delete, select
 from sqlalchemy.engine import CursorResult
 
@@ -27,3 +28,7 @@ class RefreshTokenRepository(
         statement = delete(RefreshToken).where(RefreshToken.id == refresh_token.id)
         result = cast(CursorResult, await self._execute_statement(statement))
         return result.rowcount == 1
+
+    async def delete_by_user(self, user: UUID4) -> None:
+        statement = delete(RefreshToken).where(RefreshToken.user_id == user)
+        await self._execute_statement(statement)

@@ -10,12 +10,13 @@ from jwcrypto import jwk, jwt
 
 from fief.crypto.jwk import generate_jwk
 from fief.crypto.password import password_helper
+from fief.db import AsyncSession
 from fief.models import User
 from fief.services.user_manager import RESET_PASSWORD_TOKEN_AUDIENCE
 from fief.settings import settings
 from fief.tasks import on_after_forgot_password
-from tests.data import TestData
-from tests.helpers import str_match
+from tests.data import TestData, session_token_tokens
+from tests.helpers import get_user_tokens, str_match
 from tests.types import TenantParams
 
 
@@ -360,6 +361,40 @@ class TestPostResetPassword:
 
         redirect_uri = response.headers["Location"]
         assert redirect_uri.endswith("/")
+
+    async def test_valid_revokes_tokens(
+        self,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        user = test_data["users"]["regular"]
+        session_tokens, refresh_tokens = await get_user_tokens(main_session, user)
+        assert len(session_tokens) > 0
+        assert len(refresh_tokens) > 0
+
+        response = await test_client_auth_csrf.post(
+            "/reset",
+            data={
+                "password": "newherminetincture",
+                "token": generate_jwt(user),
+                "csrf_token": csrf_token,
+            },
+        )
+
+        assert response.status_code == status.HTTP_302_FOUND
+
+        session_tokens, refresh_tokens = await get_user_tokens(main_session, user)
+        assert session_tokens == []
+        assert refresh_tokens == []
+
+        cookies = {}
+        cookies[settings.session_cookie_name] = session_token_tokens["regular"][0]
+        response = await test_client_auth_csrf.get("/", cookies=cookies)
+
+        assert response.status_code == status.HTTP_307_TEMPORARY_REDIRECT
+        assert response.headers["Location"] == "http://api.fief.dev/login"
 
     async def test_valid_resets_forgot_password_rate_limit(
         self,

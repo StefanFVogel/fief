@@ -12,7 +12,7 @@ from fief.models import User
 from fief.repositories import UserPermissionRepository, UserRoleRepository
 from fief.tasks import on_after_register, on_user_role_created, on_user_role_deleted
 from tests.data import TestData, tenants, users
-from tests.helpers import HTTPXResponseAssertion
+from tests.helpers import HTTPXResponseAssertion, get_user_tokens
 
 
 @pytest.mark.asyncio
@@ -338,6 +338,42 @@ class TestUpdateUser:
         assert json["fields"]["last_seen"] == "2022-01-01T13:37:00Z"
 
         assert json["tenant"]["id"] == str(user.tenant_id)
+
+    @pytest.mark.authenticated_admin
+    async def test_password_revokes_tokens(
+        self,
+        test_client_api: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        user = test_data["users"]["regular"]
+        response = await test_client_api.patch(
+            f"/users/{user.id}", json={"password": "newherminetincture"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+        session_tokens, refresh_tokens = await get_user_tokens(main_session, user)
+        assert session_tokens == []
+        assert refresh_tokens == []
+
+    @pytest.mark.authenticated_admin
+    async def test_without_password_keeps_tokens(
+        self,
+        test_client_api: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        user = test_data["users"]["regular"]
+        response = await test_client_api.patch(
+            f"/users/{user.id}", json={"email": "anne+updated@bretagne.duchy"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+        session_tokens, refresh_tokens = await get_user_tokens(main_session, user)
+        assert len(session_tokens) > 0
+        assert len(refresh_tokens) > 0
 
 
 @pytest.mark.asyncio
