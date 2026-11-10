@@ -1,6 +1,5 @@
 import json
 import urllib.parse
-import uuid
 from typing import Any, TypeVar
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -123,9 +122,6 @@ class RegistrationFlow:
         For an existing account, its owner is told they already have one.
         """
         user_create = self._get_user_create(data, tenant)
-        await self.user_manager.validate_password(user_create.password, user_create)
-        # Always hash, so both outcomes take the same time
-        hashed_password = self.user_manager.password_helper.hash(user_create.password)
 
         try:
             user = await self.user_manager.get_by_email(user_create.email, tenant.id)
@@ -134,7 +130,6 @@ class RegistrationFlow:
                 "aud": REGISTRATION_TOKEN_AUDIENCE,
                 "tenant_id": str(tenant.id),
                 "email": user_create.email,
-                "hashed_password": hashed_password,
                 "fields": user_create.fields.model_dump(
                     mode="json", exclude_unset=True
                 ),
@@ -153,9 +148,9 @@ class RegistrationFlow:
                 user, request=request
             )
 
-    async def confirm_registration(
-        self, token: str, tenant: Tenant, request: Request | None = None
-    ) -> User:
+    def get_registration_token_payload(
+        self, token: str, tenant: Tenant
+    ) -> dict[str, Any]:
         try:
             payload = json.loads(
                 Fernet(settings.encryption_key).decrypt(
@@ -170,21 +165,49 @@ class RegistrationFlow:
         ) != str(tenant.id):
             raise InvalidRegistrationTokenError()
 
+        return payload
+
+    async def confirm_registration(
+        self,
+        token: str,
+        password: str,
+        tenant: Tenant,
+        registration_session: RegistrationSession | None,
+        request: Request | None = None,
+    ) -> User:
+        """
+        Create the account of a confirmed registration.
+
+        The password is chosen by whoever opened the link, i.e. the owner of the email.
+        The OAuth account is only linked in the browser which started the registration.
+        """
+        payload = self.get_registration_token_payload(token, tenant)
+
         user_create = self._get_user_create(
-            {"email": payload["email"], "fields": payload["fields"]}, tenant
+            {
+                "email": payload["email"],
+                "fields": payload["fields"],
+                "password": password,
+            },
+            tenant,
         )
         user = await self.user_manager.create(user_create, tenant.id, request=request)
-        user.hashed_password = payload["hashed_password"]
         user.email_verified = True
         await self.user_manager.user_repository.update(user)
+        await self.user_manager.on_after_update(user, request=request)
 
-        if payload["oauth_account_id"] is not None:
-            oauth_account = await self.oauth_account_repository.get_by_id(
-                uuid.UUID(payload["oauth_account_id"])
-            )
-            if oauth_account is not None and oauth_account.tenant_id == tenant.id:
-                oauth_account.user = user
-                await self.oauth_account_repository.update(oauth_account)
+        oauth_account = (
+            registration_session.oauth_account
+            if registration_session is not None
+            else None
+        )
+        if (
+            oauth_account is not None
+            and str(oauth_account.id) == payload["oauth_account_id"]
+            and oauth_account.user_id is None
+        ):
+            oauth_account.user = user
+            await self.oauth_account_repository.update(oauth_account)
 
         return user
 

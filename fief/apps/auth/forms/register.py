@@ -1,13 +1,13 @@
 from typing import TypeVar
 
 from fastapi import Depends
-from wtforms import EmailField, FormField, validators
+from wtforms import EmailField, FormField, HiddenField, validators
 
 from fief.dependencies.register import get_optional_registration_session
 from fief.dependencies.user_field import get_registration_user_fields
 from fief.forms import BaseForm, CSRFBaseForm, PasswordCreateFieldForm, get_form_field
 from fief.locale import gettext_lazy as _
-from fief.models import RegistrationSession, RegistrationSessionFlow, UserField
+from fief.models import RegistrationSession, UserField
 
 
 class RegisterFormBase(CSRFBaseForm):
@@ -35,13 +35,9 @@ async def get_register_form_class(
     class RegisterForm(RegisterFormBase):
         fields = FormField(RegisterFormFields, separator=".")
 
-    class RegisterPasswordForm(RegisterForm, PasswordCreateFieldForm):
-        pass
-
-    if registration_session is None or (
-        registration_session is not None
-        and registration_session.flow == RegistrationSessionFlow.PASSWORD
-    ):
-        return RegisterPasswordForm
-
+    # The password is chosen when confirming the email, see RegisterConfirmForm
     return RegisterForm
+
+
+class RegisterConfirmForm(CSRFBaseForm, PasswordCreateFieldForm):
+    token = HiddenField(validators=[validators.InputRequired()])

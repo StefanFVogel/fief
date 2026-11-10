@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 
-from fief.apps.auth.forms.register import RF, get_register_form_class
+from fief.apps.auth.forms.register import (
+    RF,
+    RegisterConfirmForm,
+    get_register_form_class,
+)
 from fief.dependencies.auth import (
     BaseContext,
     get_base_context,
@@ -117,9 +121,11 @@ async def register(
             "If you already have an account with this email address, sign in instead."
         )
         response = await form_helper.get_response()
-        response = await registration_flow.delete_registration_session(
-            response, registration_session
-        )
+        # Keep the OAuth registration session: its account is linked on confirmation
+        if registration_session.flow == RegistrationSessionFlow.PASSWORD:
+            response = await registration_flow.delete_registration_session(
+                response, registration_session
+            )
         return response
 
     if (
@@ -158,13 +164,16 @@ async def register(
     return response
 
 
-@router.get("/register/confirm", name="register:confirm")
+@router.api_route("/register/confirm", methods=["GET", "POST"], name="register:confirm")
 async def confirm(
     request: Request,
-    token: str = Query(""),
-    register_form_class: type[RF] = Depends(get_register_form_class),
+    hx_trigger: str | None = Header(None),
+    token: str | None = Query(None),
     registration_flow: RegistrationFlow = Depends(get_registration_flow),
     authentication_flow: AuthenticationFlow = Depends(get_authentication_flow),
+    registration_session: RegistrationSession | None = Depends(
+        get_optional_registration_session
+    ),
     tenant: Tenant = Depends(get_current_tenant),
     context: BaseContext = Depends(get_base_context),
 ):
@@ -174,27 +183,51 @@ async def confirm(
             fatal=True,
         )
 
-    try:
-        user = await registration_flow.confirm_registration(
-            token, tenant, request=request
-        )
-    except (InvalidRegistrationTokenError, UserAlreadyExistsError):
-        form_helper = FormHelper(
-            register_form_class,
-            "auth/register.html",
-            request=request,
-            context={**context, "finalize": False, "oauth_providers": []},
-        )
-        return await form_helper.get_error_response(
-            _("The confirmation link is invalid or expired."),
-            "invalid_token",
-            fatal=True,
-        )
-
-    response = RedirectResponse(
-        tenant.url_path_for(request, "auth:verify_email_request"),
-        status_code=status.HTTP_302_FOUND,
+    form_helper = FormHelper(
+        RegisterConfirmForm,
+        "auth/register_confirm.html",
+        request=request,
+        context={**context},
     )
-    response = await authentication_flow.create_session_token(response, user.id)
-    response = await authentication_flow.set_login_hint(response, str(user.email))
-    return response
+    form = await form_helper.get_form()
+
+    if request.method == "GET":
+        form.token.data = token
+        try:
+            registration_flow.get_registration_token_payload(token or "", tenant)
+        except InvalidRegistrationTokenError:
+            return await form_helper.get_error_response(
+                _("The confirmation link is invalid or expired."),
+                "invalid_token",
+                fatal=True,
+            )
+
+    if await form_helper.is_submitted_and_valid() and hx_trigger is None:
+        try:
+            user = await registration_flow.confirm_registration(
+                form.token.data,
+                form.password.data,
+                tenant,
+                registration_session,
+                request=request,
+            )
+        except (InvalidRegistrationTokenError, UserAlreadyExistsError):
+            return await form_helper.get_error_response(
+                _("The confirmation link is invalid or expired."),
+                "invalid_token",
+                fatal=True,
+            )
+
+        response = RedirectResponse(
+            tenant.url_path_for(request, "auth:verify_email_request"),
+            status_code=status.HTTP_302_FOUND,
+        )
+        response = await authentication_flow.create_session_token(response, user.id)
+        response = await authentication_flow.set_login_hint(response, str(user.email))
+        if registration_session is not None:
+            response = await registration_flow.delete_registration_session(
+                response, registration_session
+            )
+        return response
+
+    return await form_helper.get_response()
