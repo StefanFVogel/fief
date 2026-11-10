@@ -22,7 +22,6 @@ from tests.helpers import (
     encrypted_id_token_assertions,
     id_token_assertions,
 )
-from tests.types import TenantParams
 
 AUTH_METHODS = ["client_secret_basic", "client_secret_post"]
 
@@ -162,15 +161,12 @@ class TestAuthTokenAuthorizationCode:
     )
     async def test_invalid_request(
         self,
-        tenant_params: TenantParams,
         test_client_auth: httpx.AsyncClient,
         headers: dict[str, str],
         data: dict[str, str],
         error: str,
     ):
-        response = await test_client_auth.post(
-            f"{tenant_params.path_prefix}/api/token", data=data, headers=headers
-        )
+        response = await test_client_auth.post("/api/token", data=data, headers=headers)
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -181,16 +177,17 @@ class TestAuthTokenAuthorizationCode:
     async def test_expired_authorization_code(
         self,
         auth_method: str,
-        tenant_params: TenantParams,
         test_client_auth: httpx.AsyncClient,
         test_data: TestData,
     ):
         authorization_code = test_data["authorization_codes"]["expired"]
         client = authorization_code.client
+        tenant = client.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
 
         headers, data = get_authenticated_request_headers_data(auth_method, client)
         response = await test_client_auth.post(
-            f"{tenant_params.path_prefix}/api/token",
+            f"{path_prefix}/api/token",
             headers=headers,
             data={
                 **data,
@@ -209,15 +206,16 @@ class TestAuthTokenAuthorizationCode:
     async def test_client_not_matching_authorization_code(
         self,
         auth_method: str,
-        tenant_params: TenantParams,
         test_client_auth: httpx.AsyncClient,
         test_data: TestData,
     ):
         authorization_code = test_data["authorization_codes"]["default_regular"]
         client = test_data["clients"]["secondary_tenant"]
+        tenant = client.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
         headers, data = get_authenticated_request_headers_data(auth_method, client)
         response = await test_client_auth.post(
-            f"{tenant_params.path_prefix}/api/token",
+            f"{path_prefix}/api/token",
             headers=headers,
             data={
                 **data,
@@ -233,18 +231,73 @@ class TestAuthTokenAuthorizationCode:
         assert json["error"] == "invalid_grant"
 
     @pytest.mark.parametrize("auth_method", AUTH_METHODS)
-    async def test_redirect_uri_not_matching(
+    async def test_client_not_matching_tenant(
         self,
         auth_method: str,
-        tenant_params: TenantParams,
         test_client_auth: httpx.AsyncClient,
         test_data: TestData,
     ):
         authorization_code = test_data["authorization_codes"]["default_regular"]
         client = authorization_code.client
+        secondary_tenant = test_data["tenants"]["secondary"]
         headers, data = get_authenticated_request_headers_data(auth_method, client)
         response = await test_client_auth.post(
-            f"{tenant_params.path_prefix}/api/token",
+            f"/{secondary_tenant.slug}/api/token",
+            headers=headers,
+            data={
+                **data,
+                "grant_type": "authorization_code",
+                "code": authorization_code_codes["default_regular"][0],
+                "redirect_uri": authorization_code.redirect_uri,
+            },
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        json = response.json()
+        assert json["error"] == "invalid_client"
+
+    async def test_public_client_not_matching_tenant(
+        self, test_client_auth: httpx.AsyncClient, test_data: TestData
+    ):
+        authorization_code = test_data["authorization_codes"][
+            "default_public_regular_code_challenge_s256"
+        ]
+        client = authorization_code.client
+        secondary_tenant = test_data["tenants"]["secondary"]
+
+        response = await test_client_auth.post(
+            f"/{secondary_tenant.slug}/api/token",
+            data={
+                "client_id": client.client_id,
+                "grant_type": "authorization_code",
+                "code": authorization_code_codes[
+                    "default_public_regular_code_challenge_s256"
+                ][0],
+                "redirect_uri": authorization_code.redirect_uri,
+                "code_verifier": "S256_CODE_CHALLENGE",
+            },
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        json = response.json()
+        assert json["error"] == "invalid_client"
+
+    @pytest.mark.parametrize("auth_method", AUTH_METHODS)
+    async def test_redirect_uri_not_matching(
+        self,
+        auth_method: str,
+        test_client_auth: httpx.AsyncClient,
+        test_data: TestData,
+    ):
+        authorization_code = test_data["authorization_codes"]["default_regular"]
+        client = authorization_code.client
+        tenant = client.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
+        headers, data = get_authenticated_request_headers_data(auth_method, client)
+        response = await test_client_auth.post(
+            f"{path_prefix}/api/token",
             headers=headers,
             data={
                 **data,
@@ -283,15 +336,16 @@ class TestAuthTokenAuthorizationCode:
         auth_method: str,
         authorization_code_alias: str,
         code_verifier_data: dict[str, str],
-        tenant_params: TenantParams,
         test_client_auth: httpx.AsyncClient,
         test_data: TestData,
     ):
         authorization_code = test_data["authorization_codes"][authorization_code_alias]
         client = authorization_code.client
+        tenant = client.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
         headers, data = get_authenticated_request_headers_data(auth_method, client)
         response = await test_client_auth.post(
-            f"{tenant_params.path_prefix}/api/token",
+            f"{path_prefix}/api/token",
             headers=headers,
             data={
                 **data,
@@ -350,14 +404,15 @@ class TestAuthTokenAuthorizationCode:
     async def test_public_client_code_verifier_not_matching(
         self,
         authorization_code_alias: str,
-        tenant_params: TenantParams,
         test_client_auth: httpx.AsyncClient,
         test_data: TestData,
     ):
         authorization_code = test_data["authorization_codes"][authorization_code_alias]
         client = authorization_code.client
+        tenant = client.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
         response = await test_client_auth.post(
-            f"{tenant_params.path_prefix}/api/token",
+            f"{path_prefix}/api/token",
             data={
                 "client_id": client.client_id,
                 "grant_type": "authorization_code",
@@ -703,15 +758,12 @@ class TestAuthTokenRefreshToken:
     )
     async def test_invalid_request(
         self,
-        tenant_params: TenantParams,
         test_client_auth: httpx.AsyncClient,
         headers: dict[str, str],
         data: dict[str, str],
         error: str,
     ):
-        response = await test_client_auth.post(
-            f"{tenant_params.path_prefix}/api/token", data=data, headers=headers
-        )
+        response = await test_client_auth.post("/api/token", data=data, headers=headers)
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -722,15 +774,16 @@ class TestAuthTokenRefreshToken:
     async def test_client_not_matching_refresh_token(
         self,
         auth_method: str,
-        tenant_params: TenantParams,
         test_client_auth: httpx.AsyncClient,
         test_data: TestData,
     ):
         refresh_token = test_data["refresh_tokens"]["default_regular"]
         client = test_data["clients"]["secondary_tenant"]
+        tenant = client.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
         headers, data = get_authenticated_request_headers_data(auth_method, client)
         response = await test_client_auth.post(
-            f"{tenant_params.path_prefix}/api/token",
+            f"{path_prefix}/api/token",
             headers=headers,
             data={
                 **data,

@@ -156,7 +156,7 @@ async def callback(
         ) from e
 
     oauth_account = await oauth_account_repository.get_by_provider_and_account_id(
-        oauth_provider.id, account_id
+        oauth_provider.id, account_id, tenant.id
     )
 
     # Existing account

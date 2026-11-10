@@ -9,9 +9,10 @@ from pydantic import UUID4
 from fief.crypto.code_challenge import verify_code_verifier
 from fief.crypto.token import get_token_hash
 from fief.dependencies.repositories import get_repository
+from fief.dependencies.tenant import get_current_tenant
 from fief.dependencies.users import get_user_manager
 from fief.exceptions import TokenRequestException
-from fief.models import Client, ClientType, User
+from fief.models import Client, ClientType, Tenant, User
 from fief.repositories import (
     AuthorizationCodeRepository,
     ClientRepository,
@@ -91,15 +92,12 @@ async def authenticate_client(
     client_secret_basic: Client | None = Depends(authenticate_client_secret_basic),
     client_secret_post: Client | None = Depends(authenticate_client_secret_post),
     client_none: Client | None = Depends(authenticate_none),
+    tenant: Tenant = Depends(get_current_tenant),
 ) -> Client:
-    if client_secret_basic is not None:
-        return client_secret_basic
+    client = client_secret_basic or client_secret_post or client_none
 
-    if client_secret_post is not None:
-        return client_secret_post
-
-    if client_none is not None:
-        return client_none
+    if client is not None and client.tenant_id == tenant.id:
+        return client
 
     raise TokenRequestException(TokenError.get_invalid_client())
 
