@@ -36,6 +36,8 @@ from fief.tasks import (
     on_after_forgot_password,
     on_after_register,
     on_email_verification_requested,
+    on_existing_account_registration,
+    on_registration_confirmation_requested,
 )
 
 RESET_PASSWORD_TOKEN_AUDIENCE = "fief:reset"
@@ -376,6 +378,39 @@ class UserManager:
             on_after_forgot_password,
             str(user.id),
             reset_url.url,
+        )
+
+    async def on_registration_confirmation_requested(
+        self, tenant: Tenant, email: str, token: str, *, request: Request
+    ) -> None:
+        confirm_url = furl(
+            tenant.url_path_for(request, "register:confirm").make_absolute_url(
+                request.base_url.replace(netloc=settings.fief_domain)
+            )
+        )
+        confirm_url.add(query_params={"token": token})
+        self.send_task(
+            on_registration_confirmation_requested,
+            str(tenant.id),
+            email,
+            confirm_url.url,
+        )
+
+    async def on_existing_account_registration(
+        self, user: User, *, request: Request
+    ) -> None:
+        base_url = request.base_url.replace(netloc=settings.fief_domain)
+        login_url = user.tenant.url_path_for(request, "auth:login").make_absolute_url(
+            base_url
+        )
+        forgot_password_url = user.tenant.url_path_for(
+            request, "reset:forgot"
+        ).make_absolute_url(base_url)
+        self.send_task(
+            on_existing_account_registration,
+            str(user.id),
+            str(login_url),
+            str(forgot_password_url),
         )
 
     async def on_after_reset_password(

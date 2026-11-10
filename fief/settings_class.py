@@ -110,6 +110,7 @@ class Settings(BaseSettings):
     registration_session_cookie_domain: str = ""
     registration_session_cookie_secure: bool = True
     registration_session_lifetime_seconds: int = 3600
+    registration_confirmation_lifetime_seconds: int = 3600
 
     email_verification_code_length: int = 6
     email_verification_lifetime_seconds: int = 3600

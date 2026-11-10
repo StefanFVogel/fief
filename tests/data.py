@@ -604,6 +604,14 @@ registration_sessions: ModelMapping[RegistrationSession] = {
         flow=RegistrationSessionFlow.PASSWORD,
         tenant=tenants["default"],
     ),
+    "default_password_2": RegistrationSession(
+        flow=RegistrationSessionFlow.PASSWORD,
+        tenant=tenants["default"],
+    ),
+    "default_password_3": RegistrationSession(
+        flow=RegistrationSessionFlow.PASSWORD,
+        tenant=tenants["default"],
+    ),
     "secondary_password": RegistrationSession(
         flow=RegistrationSessionFlow.PASSWORD,
         tenant=tenants["secondary"],
@@ -926,6 +934,16 @@ email_templates: ModelMapping[EmailTemplate] = {
         type=EmailTemplateType.FORGOT_PASSWORD,
         subject="TITLE",
         content='{% extends "BASE" %}{% block main %}FORGOT_PASSWORD {{ reset_url }}{% endblock %}',
+    ),
+    "confirm_registration": EmailTemplate(
+        type=EmailTemplateType.CONFIRM_REGISTRATION,
+        subject="TITLE",
+        content='{% extends "BASE" %}{% block main %}CONFIRM_REGISTRATION {{ confirm_url }}{% endblock %}',
+    ),
+    "existing_account_registration": EmailTemplate(
+        type=EmailTemplateType.EXISTING_ACCOUNT_REGISTRATION,
+        subject="TITLE",
+        content='{% extends "BASE" %}{% block main %}EXISTING_ACCOUNT_REGISTRATION {{ login_url }} {{ forgot_password_url }}{% endblock %}',
     ),
 }
 

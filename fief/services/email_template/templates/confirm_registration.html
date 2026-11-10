@@ -1,0 +1,24 @@
+{% extends "BASE" %}
+
+{% block preheader %}Use this link to confirm your email address, choose your password and finish creating your account. This link is only valid for 1 hour.{% endblock %}
+
+{% block main %}
+  <h1>Confirm your account</h1>
+  <p>You recently signed up for a {{ tenant.name }} account with this email address. Use the button below to confirm it, choose your password and finish creating your account. <strong>This link is only valid for the next hour.</strong></p>
+  <table class="body-action" align="center" width="100%" cellpadding="0" cellspacing="0" role="presentation">
+    <tr>
+      <td align="center">
+        <!-- Border based button
+  https://litmus.com/blog/a-guide-to-bulletproof-buttons-in-email-design -->
+        <table width="100%" border="0" cellspacing="0" cellpadding="0" role="presentation">
+          <tr>
+            <td align="center">
+              <a href="{{confirm_url}}" class="f-fallback button button--green" target="_blank" rel="noopener noreferrer">Confirm my account</a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+  <p>If you didn't sign up, you can safely ignore this email: no account will be created.</p>
+{% endblock %}

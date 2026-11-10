@@ -38,6 +38,12 @@ msgstr "嘗試次數過多。請在 %(minutes)s 分鐘後重試。"
 msgid "A user with the same email address already exists."
 msgstr "此電子郵件地址已被使用。"
 
+msgid "Check your inbox! We've sent you an email to finish creating your account. If you already have an account with this email address, sign in instead."
+msgstr "請檢查您的收件匣！我們已寄送一封電子郵件給您以完成帳號建立。如果您已經擁有使用此電子郵件地址的帳號，請直接登入。"
+
+msgid "The confirmation link is invalid or expired."
+msgstr "確認連結無效或已過期。"
+
 #: fief/dependencies/auth.py:78
 msgid "response_type is missing"
 msgstr "缺少 response_type"
