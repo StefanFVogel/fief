@@ -468,7 +468,7 @@ class TestCreateUserAccessToken:
     async def test_valid(self, test_client_api: httpx.AsyncClient, test_data: TestData):
         user = test_data["users"]["regular"]
         response = await test_client_api.post(
-            f"/users/{user.id!s}/access-token",
+            f"/users/{str(user.id)}/access-token",
             json={
                 "client_id": str(test_data["clients"]["default_tenant"].id),
                 "scopes": ["openid"],

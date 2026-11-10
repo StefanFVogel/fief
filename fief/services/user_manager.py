@@ -130,7 +130,7 @@ class UserManager:
 
         try:
             await self.get_by_email(user_create.email, tenant)
-            raise UserAlreadyExistsError()
+            raise UserAlreadyExistsError()  # noqa: TRY301
         except UserDoesNotExistError:
             pass
 
@@ -171,7 +171,7 @@ class UserManager:
         if user.email != email:
             try:
                 await self.get_by_email(email, user.tenant_id)
-                raise UserAlreadyExistsError()
+                raise UserAlreadyExistsError()  # noqa: TRY301
             except UserDoesNotExistError:
                 pass
 
@@ -457,7 +457,7 @@ class UserManager:
         if email is not None and user.email != email:
             try:
                 await self.get_by_email(email, user.tenant_id)
-                raise UserAlreadyExistsError()
+                raise UserAlreadyExistsError()  # noqa: TRY301
             except UserDoesNotExistError:
                 user.email = email
 

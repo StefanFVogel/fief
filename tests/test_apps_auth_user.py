@@ -376,6 +376,9 @@ class TestUserChangePassword:
         test_client_auth_access_token: httpx.AsyncClient,
         main_session: AsyncSession,
     ):
+        session_tokens, _ = await get_user_tokens(main_session, tenant_params.user)
+        assert len(session_tokens) > 0
+
         response = await test_client_auth_access_token.patch(
             f"{tenant_params.path_prefix}/api/password",
             json={"password": "newherminetincture"},
