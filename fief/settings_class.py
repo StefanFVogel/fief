@@ -9,6 +9,7 @@ from pydantic import (
     DirectoryPath,
     EmailStr,
     Field,
+    IPvAnyNetwork,
     SecretStr,
     field_validator,
     model_validator,
@@ -137,6 +138,8 @@ class Settings(BaseSettings):
     default_refresh_token_lifetime_seconds: int = 3600 * 24 * 30
 
     webhooks_max_attempts: int = 5
+    webhooks_allowed_networks: list[IPvAnyNetwork] = []
+    webhooks_max_response_log_size: int = 4096
 
     logout_allowed_origins: list[AnyHttpUrl] = []
 
@@ -151,6 +154,8 @@ class Settings(BaseSettings):
     fief_admin_session_cookie_name: str = "fief_admin_session"
     fief_admin_session_cookie_domain: str = ""
     fief_admin_session_cookie_secure: bool = True
+    fief_admin_session_lifetime_seconds: int = 3600 * 2
+    fief_admin_session_idle_timeout_seconds: int = 60 * 30
     fief_admin_state_cookie_name: str = "fief_admin_state"
     fief_admin_state_cookie_domain: str = ""
     fief_admin_state_cookie_secure: bool = True

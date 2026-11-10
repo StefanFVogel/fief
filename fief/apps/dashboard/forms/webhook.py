@@ -1,5 +1,6 @@
 from wtforms import URLField, validators
 
+from fief.apps.dashboard.validators import WebhookURLValidator
 from fief.forms import CSRFBaseForm, SelectMultipleFieldCheckbox
 from fief.services.webhooks.models import WEBHOOK_EVENTS
 
@@ -7,7 +8,11 @@ from fief.services.webhooks.models import WEBHOOK_EVENTS
 class BaseWebhookForm(CSRFBaseForm):
     url = URLField(
         "URL",
-        validators=[validators.InputRequired(), validators.URL(require_tld=False)],
+        validators=[
+            validators.InputRequired(),
+            validators.URL(require_tld=False),
+            WebhookURLValidator(),
+        ],
     )
     events = SelectMultipleFieldCheckbox(
         "Events to notify", choices=[event.key() for event in WEBHOOK_EVENTS]
