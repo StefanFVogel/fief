@@ -111,6 +111,7 @@ async def authorize(
         acr=acr,
         code_challenge_tuple=code_challenge_tuple,
         client=client,
+        prompt=prompt,
     )
 
     if login_hint is not None:
