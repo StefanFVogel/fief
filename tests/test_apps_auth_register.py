@@ -77,6 +77,13 @@ class TestGetRegister:
         registration_session_cookie = response.cookies[
             settings.registration_session_cookie_name
         ]
+        set_cookie_header = next(
+            header
+            for header in response.headers.get_list("Set-Cookie")
+            if header.startswith(f"{settings.registration_session_cookie_name}=")
+        )
+        assert "httponly" in set_cookie_header.lower()
+
         registration_session_repository = RegistrationSessionRepository(main_session)
         registration_session = await registration_session_repository.get_by_token(
             registration_session_cookie

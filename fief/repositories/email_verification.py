@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from pydantic import UUID4
 from sqlalchemy import delete, select
 
@@ -16,7 +18,9 @@ class EmailVerificationRepository(
         self, code: str, user: UUID4
     ) -> EmailVerification | None:
         statement = select(EmailVerification).where(
-            EmailVerification.code == code, EmailVerification.user_id == user
+            EmailVerification.code == code,
+            EmailVerification.user_id == user,
+            EmailVerification.expires_at > datetime.now(UTC),
         )
         return await self.get_one_or_none(statement)
 
