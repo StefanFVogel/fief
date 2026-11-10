@@ -28,8 +28,10 @@ from fief.services.admin import (
     ADMIN_ROLE_NAME,
 )
 from fief.services.email_template.initializer import EmailTemplateInitializer
+from fief.services.localhost import is_localhost
 from fief.services.user_roles import UserRolesService
 from fief.services.webhooks.trigger import trigger_webhooks
+from fief.settings_class import Environment
 from fief.tasks import send_task
 
 if TYPE_CHECKING:
@@ -195,11 +197,16 @@ class Initializer:
 
         client_id = self.settings.fief_client_id
         redirect_uris = [
-            f"http://{self.settings.fief_domain}/admin/auth/callback",
             f"https://{self.settings.fief_domain}/admin/auth/callback",
-            f"http://{self.settings.fief_domain}/docs/oauth2-redirect",
             f"https://{self.settings.fief_domain}/docs/oauth2-redirect",
         ]
+        if self.settings.environment != Environment.PRODUCTION or is_localhost(
+            self.settings.fief_domain
+        ):
+            redirect_uris += [
+                f"http://{self.settings.fief_domain}/admin/auth/callback",
+                f"http://{self.settings.fief_domain}/docs/oauth2-redirect",
+            ]
 
         client = await repository.get_by_client_id(client_id)
         if client is not None:

@@ -111,8 +111,19 @@ class TestCreateClient:
         assert json["detail"][0]["loc"] == ["body", "redirect_uris"]
 
     @pytest.mark.authenticated_admin
+    @pytest.mark.parametrize(
+        "redirect_uri",
+        [
+            "http://nantes.city/callback",
+            "http://localhost.attacker.example/callback",
+            "http://192.168.0.42/callback",
+        ],
+    )
     async def test_redirect_uris_not_https(
-        self, test_client_api: httpx.AsyncClient, test_data: TestData
+        self,
+        redirect_uri: str,
+        test_client_api: httpx.AsyncClient,
+        test_data: TestData,
     ):
         tenant = test_data["tenants"]["default"]
         response = await test_client_api.post(
@@ -121,7 +132,7 @@ class TestCreateClient:
                 "name": "New client",
                 "first_party": True,
                 "client_type": "confidential",
-                "redirect_uris": ["http://nantes.city/callback"],
+                "redirect_uris": [redirect_uri],
                 "tenant_id": str(tenant.id),
             },
         )
