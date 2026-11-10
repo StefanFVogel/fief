@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import (
@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     database_table_prefix: str = "fief_"
 
     redis_url: str = "redis://localhost:6379"
+    redis_ssl_cert_reqs: Literal["required", "optional", "none"] = "required"
 
     email_provider: AvailableEmailProvider = AvailableEmailProvider.NULL
     email_provider_params: dict[str, Any] = Field(default_factory=dict)
