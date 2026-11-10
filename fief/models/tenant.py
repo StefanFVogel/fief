@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from starlette.datastructures import URL, URLPath
 from starlette.routing import Router
 
+from fief.crypto.encryption import FernetEngine, StringEncryptedType
 from fief.crypto.jwk import generate_signature_jwk_string, load_jwk
 from fief.models.base import Base, get_prefixed_tablename
 from fief.models.email_domain import EmailDomain
@@ -41,7 +42,9 @@ class Tenant(UUIDModel, CreatedUpdatedAt, Base):
     slug: Mapped[str] = mapped_column(String(length=255), nullable=False, unique=True)
     default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     sign_jwk: Mapped[str] = mapped_column(
-        Text, nullable=False, default=generate_signature_jwk_string
+        StringEncryptedType(Text, settings.encryption_key, FernetEngine),
+        nullable=False,
+        default=generate_signature_jwk_string,
     )
     registration_allowed: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False

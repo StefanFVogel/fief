@@ -8,6 +8,7 @@ from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql.sqltypes import JSON
 
+from fief.crypto.encryption import FernetEngine, StringEncryptedType
 from fief.crypto.jwk import load_jwk
 from fief.models.base import TABLE_PREFIX, Base
 from fief.models.generics import GUID, CreatedUpdatedAt, UUIDModel
@@ -59,7 +60,9 @@ class Client(UUIDModel, CreatedUpdatedAt, Base):
         String(length=255), default=secrets.token_urlsafe, nullable=False, index=True
     )
     client_secret: Mapped[str] = mapped_column(
-        String(length=255), default=secrets.token_urlsafe, nullable=False, index=True
+        StringEncryptedType(Text, settings.encryption_key, FernetEngine),
+        default=secrets.token_urlsafe,
+        nullable=False,
     )
     redirect_uris: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=get_default_redirect_uris

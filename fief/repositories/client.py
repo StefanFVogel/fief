@@ -1,3 +1,4 @@
+import secrets
 import uuid
 
 from sqlalchemy import select
@@ -24,10 +25,12 @@ class ClientRepository(BaseRepository[Client], UUIDRepositoryMixin[Client]):
     async def get_by_client_id_and_secret(
         self, client_id: str, client_secret: str
     ) -> Client | None:
-        statement = select(Client).where(
-            Client.client_id == client_id, Client.client_secret == client_secret
-        )
-        return await self.get_one_or_none(statement)
+        client = await self.get_by_client_id(client_id)
+        if client is None or not secrets.compare_digest(
+            client.client_secret.encode("utf-8"), client_secret.encode("utf-8")
+        ):
+            return None
+        return client
 
     async def count_by_tenant(self, tenant: uuid.UUID) -> int:
         statement = select(Client).where(Client.tenant_id == tenant)
