@@ -57,8 +57,15 @@ def chown_sqlite_database(url: URL) -> None:
     directory_stat = os.stat(os.path.dirname(os.path.abspath(url.database)))
     for suffix in SQLITE_FILE_SUFFIXES:
         path = f"{url.database}{suffix}"
-        if os.path.exists(path):
-            os.chown(path, directory_stat.st_uid, directory_stat.st_gid)
+        # Like `chown -h` in the entrypoint: never follow a symlink planted
+        # by the unprivileged user to a file only root should own.
+        if os.path.lexists(path):
+            os.chown(
+                path,
+                directory_stat.st_uid,
+                directory_stat.st_gid,
+                follow_symlinks=False,
+            )
 
 
 def mask_setting_value(key: str, value):

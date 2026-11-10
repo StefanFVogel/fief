@@ -121,8 +121,35 @@ class TestChownSQLiteDatabase:
             chown_sqlite_database(sqlite_url)
 
         assert chown.call_args_list == [
-            call(str(tmp_path / name), directory_stat.st_uid, directory_stat.st_gid)
+            call(
+                str(tmp_path / name),
+                directory_stat.st_uid,
+                directory_stat.st_gid,
+                follow_symlinks=False,
+            )
             for name in ["fief.db", "fief.db-wal", "fief.db-shm"]
+        ]
+
+    def test_root_sqlite_symlink(self, tmp_path: Path, sqlite_url: URL):
+        (tmp_path / "fief.db").touch()
+        (tmp_path / "target").touch()
+        (tmp_path / "fief.db-journal").symlink_to(tmp_path / "target")
+        directory_stat = os.stat(tmp_path)
+
+        with (
+            patch("os.geteuid", return_value=0, create=True),
+            patch("os.chown", create=True) as chown,
+        ):
+            chown_sqlite_database(sqlite_url)
+
+        assert chown.call_args_list == [
+            call(
+                str(tmp_path / name),
+                directory_stat.st_uid,
+                directory_stat.st_gid,
+                follow_symlinks=False,
+            )
+            for name in ["fief.db", "fief.db-journal"]
         ]
 
     def test_root_sqlite_missing_file(self, sqlite_url: URL):
