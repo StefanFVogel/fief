@@ -34,8 +34,8 @@ RUN --mount=type=bind,from=wheel,source=/dist,target=/dist \
     && apt-get autoremove -y build-essential \
     && groupadd --gid 1000 fief \
     && useradd --uid 1000 --gid fief --no-create-home --home-dir /app --shell /usr/sbin/nologin fief \
-    && mkdir -p /data/db \
-    && chown -R fief:fief /app /data
+    && mkdir -p /data/db /tmp/dramatiq-prometheus \
+    && chown -R fief:fief /app /data /tmp/dramatiq-prometheus
 
 COPY docker/supervisord.conf /etc/supervisord.conf
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
