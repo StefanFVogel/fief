@@ -421,6 +421,13 @@ class TestAuthAuthorize:
         assert location.endswith(f"{tenant_params.path_prefix}{redirection}")
 
         login_session_cookie = response.cookies[settings.login_session_cookie_name]
+        set_cookie_header = next(
+            header
+            for header in response.headers.get_list("Set-Cookie")
+            if header.startswith(f"{settings.login_session_cookie_name}=")
+        )
+        assert "httponly" in set_cookie_header.lower()
+
         login_session_repository = LoginSessionRepository(main_session)
         login_session = await login_session_repository.get_by_token(
             login_session_cookie

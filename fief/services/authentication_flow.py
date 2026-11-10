@@ -83,6 +83,7 @@ class AuthenticationFlow:
             login_session.token,
             domain=settings.login_session_cookie_domain,
             secure=settings.login_session_cookie_secure,
+            httponly=True,
         )
 
         return response

@@ -6,8 +6,9 @@ import httpx
 import pytest
 from fastapi import status
 from furl import furl
-from jwcrypto import jwt
+from jwcrypto import jwk, jwt
 
+from fief.crypto.jwk import generate_jwk
 from fief.crypto.password import password_helper
 from fief.models import User
 from fief.services.user_manager import RESET_PASSWORD_TOKEN_AUDIENCE
@@ -18,7 +19,13 @@ from tests.helpers import str_match
 from tests.types import TenantParams
 
 
-def generate_jwt(user: User, *, exp: int | None = None, with_exp: bool = True) -> str:
+def generate_jwt(
+    user: User,
+    *,
+    exp: int | None = None,
+    with_exp: bool = True,
+    signing_key: jwk.JWK | None = None,
+) -> str:
     claims = {
         "sub": str(user.id),
         "password_fgpt": password_helper.hash(user.hashed_password),
@@ -31,7 +38,8 @@ def generate_jwt(user: User, *, exp: int | None = None, with_exp: bool = True) -
             else int(datetime.now(UTC).timestamp())
             + settings.reset_password_token_lifetime_seconds
         )
-    signing_key = user.tenant.get_sign_jwk()
+    if signing_key is None:
+        signing_key = user.tenant.get_sign_jwk()
     token = jwt.JWT(header={"alg": "RS256", "kid": signing_key["kid"]}, claims=claims)
     token.make_signed_token(signing_key)
 
@@ -278,6 +286,43 @@ class TestPostResetPassword:
     ):
         user = test_data["users"]["regular"]
         token = generate_jwt(user, **token_kwargs)
+
+        response = await test_client_auth_csrf.post(
+            "/reset",
+            data={
+                "password": "newherminetincture",
+                "token": token,
+                "csrf_token": csrf_token,
+            },
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        headers = response.headers
+        assert headers["X-Fief-Error"] == "invalid_token"
+
+    @pytest.mark.parametrize(
+        "token_kwargs",
+        [
+            pytest.param(
+                {"signing_key": generate_jwk("OTHER_KEY", "sig")},
+                id="Token signed by another key",
+            ),
+            pytest.param({"malformed": True}, id="Malformed token"),
+        ],
+    )
+    async def test_invalid_signature_or_malformed_token(
+        self,
+        token_kwargs: dict,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+    ):
+        user = test_data["users"]["regular"]
+        if token_kwargs.get("malformed"):
+            token = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.bm90LWEtc2lnbmF0dXJl"
+        else:
+            token = generate_jwt(user, **token_kwargs)
 
         response = await test_client_auth_csrf.post(
             "/reset",
