@@ -1,6 +1,7 @@
 # Allowlist: only what the image build needs enters the build context
 *
 !README.md
+!docker/entrypoint.sh
 !docker/supervisord.conf
 !fief/
 !js/
