@@ -662,7 +662,7 @@ class TestOAuthCallback:
         oauth_account_repository = OAuthAccountRepository(main_session)
         updated_oauth_account = (
             await oauth_account_repository.get_by_provider_and_account_id(
-                oauth_session.oauth_provider_id, oauth_account.account_id
+                oauth_session.oauth_provider_id, oauth_account.account_id, tenant.id
             )
         )
         assert updated_oauth_account is not None
@@ -734,7 +734,7 @@ class TestOAuthCallback:
 
         oauth_account_repository = OAuthAccountRepository(main_session)
         oauth_account = await oauth_account_repository.get_by_provider_and_account_id(
-            oauth_session.oauth_provider_id, "NEW_ACCOUNT"
+            oauth_session.oauth_provider_id, "NEW_ACCOUNT", tenant.id
         )
         assert oauth_account is not None
         assert oauth_account.access_token == "ACCESS_TOKEN"
@@ -831,3 +831,82 @@ class TestOAuthCallback:
 
         redirect_uri = response.headers["Location"]
         assert redirect_uri.endswith(f"{path_prefix}/register")
+
+    async def test_secondary_tenant_existing_oauth_account_other_tenant(
+        self,
+        mocker: MockerFixture,
+        test_client_auth: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        login_session = test_data["login_sessions"]["secondary"]
+        client = login_session.client
+        tenant = client.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
+
+        oauth_session = test_data["oauth_sessions"]["secondary_google"]
+        oauth_account = test_data["oauth_accounts"]["regular_google"]
+
+        cookies = {}
+        cookies[settings.oauth_session_cookie_name] = oauth_session.token
+        cookies[settings.login_session_cookie_name] = login_session.token
+
+        oauth_provider_service_mock = MagicMock(spec=BaseOAuth2)
+        oauth_provider_service_mock.get_access_token.side_effect = AsyncMock(
+            return_value={
+                "access_token": "ACCESS_TOKEN",
+                "expires_in": 3600,
+                "expires_at": int(datetime.now(UTC).timestamp() + 3600),
+                "refresh_token": "REFRESH_TOKEN",
+            }
+        )
+        oauth_provider_service_mock.get_id_email.side_effect = AsyncMock(
+            return_value=(oauth_account.account_id, oauth_account.account_email)
+        )
+        mocker.patch(
+            "fief.apps.auth.routers.oauth.get_oauth_provider_service"
+        ).return_value = oauth_provider_service_mock
+
+        response = await test_client_auth.get(
+            "/oauth/callback",
+            params={
+                "code": "CODE",
+                "redirect_uri": oauth_session.redirect_uri,
+                "state": oauth_session.token,
+            },
+            cookies=cookies,
+        )
+
+        assert response.status_code == status.HTTP_302_FOUND
+
+        redirect_uri = response.headers["Location"]
+        assert redirect_uri.endswith(f"{path_prefix}/register")
+
+        assert settings.session_cookie_name not in response.cookies
+
+        oauth_account_repository = OAuthAccountRepository(main_session)
+        other_tenant_oauth_account = await oauth_account_repository.get_by_id(
+            oauth_account.id
+        )
+        assert other_tenant_oauth_account is not None
+        assert other_tenant_oauth_account.access_token == oauth_account.access_token
+
+        new_oauth_account = (
+            await oauth_account_repository.get_by_provider_and_account_id(
+                oauth_session.oauth_provider_id, oauth_account.account_id, tenant.id
+            )
+        )
+        assert new_oauth_account is not None
+        assert new_oauth_account.id != oauth_account.id
+        assert new_oauth_account.user is None
+
+        registration_session_cookie = response.cookies[
+            settings.registration_session_cookie_name
+        ]
+        registration_session_repository = RegistrationSessionRepository(main_session)
+        registration_session = await registration_session_repository.get_by_token(
+            registration_session_cookie
+        )
+        assert registration_session is not None
+        assert registration_session.tenant_id == tenant.id
+        assert registration_session.oauth_account_id == new_oauth_account.id
