@@ -9,7 +9,9 @@ if TYPE_CHECKING:  # pragma: no cover
     from fief.models import EmailTemplate
     from fief.repositories import EmailTemplateRepository
     from fief.services.email_template.contexts import (
+        ConfirmRegistrationContext,
         EmailContext,
+        ExistingAccountRegistrationContext,
         ForgotPasswordContext,
         VerifyEmailContext,
         WelcomeContext,
@@ -66,6 +68,20 @@ class EmailTemplateRenderer:
         self,
         type: Literal[EmailTemplateType.FORGOT_PASSWORD],
         context: "ForgotPasswordContext",
+    ) -> str: ...  # pragma: no cover
+
+    @overload
+    async def render(
+        self,
+        type: Literal[EmailTemplateType.CONFIRM_REGISTRATION],
+        context: "ConfirmRegistrationContext",
+    ) -> str: ...  # pragma: no cover
+
+    @overload
+    async def render(
+        self,
+        type: Literal[EmailTemplateType.EXISTING_ACCOUNT_REGISTRATION],
+        context: "ExistingAccountRegistrationContext",
     ) -> str: ...  # pragma: no cover
 
     async def render(self, type, context: "EmailContext") -> str:
@@ -131,6 +147,20 @@ class EmailSubjectRenderer:
         self,
         type: Literal[EmailTemplateType.FORGOT_PASSWORD],
         context: "ForgotPasswordContext",
+    ) -> str: ...  # pragma: no cover
+
+    @overload
+    async def render(
+        self,
+        type: Literal[EmailTemplateType.CONFIRM_REGISTRATION],
+        context: "ConfirmRegistrationContext",
+    ) -> str: ...  # pragma: no cover
+
+    @overload
+    async def render(
+        self,
+        type: Literal[EmailTemplateType.EXISTING_ACCOUNT_REGISTRATION],
+        context: "ExistingAccountRegistrationContext",
     ) -> str: ...  # pragma: no cover
 
     async def render(self, type, context: "EmailContext") -> str:

@@ -43,6 +43,30 @@ class EmailTemplateInitializer:
             )
             await self.repository.create(forgot_password)
 
+        if (
+            await self.repository.get_by_type(EmailTemplateType.CONFIRM_REGISTRATION)
+            is None
+        ):
+            confirm_registration = EmailTemplate(
+                type=EmailTemplateType.CONFIRM_REGISTRATION,
+                subject="Confirm your {{ tenant.name }}'s account",
+                content=self._load_template("confirm_registration.html"),
+            )
+            await self.repository.create(confirm_registration)
+
+        if (
+            await self.repository.get_by_type(
+                EmailTemplateType.EXISTING_ACCOUNT_REGISTRATION
+            )
+            is None
+        ):
+            existing_account_registration = EmailTemplate(
+                type=EmailTemplateType.EXISTING_ACCOUNT_REGISTRATION,
+                subject="You already have a {{ tenant.name }}'s account",
+                content=self._load_template("existing_account_registration.html"),
+            )
+            await self.repository.create(existing_account_registration)
+
     def _load_template(self, name: str) -> str:
         with open(self.templates_dir / name) as file:
             return file.read()

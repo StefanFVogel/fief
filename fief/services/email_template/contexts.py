@@ -61,9 +61,33 @@ class ForgotPasswordContext(EmailContext):
         return context_kwargs
 
 
+class ConfirmRegistrationContext(EmailContext):
+    confirm_url: str
+
+    @classmethod
+    async def _get_sample_context_kwargs(cls, session: AsyncSession) -> dict[str, Any]:
+        context_kwargs = await super()._get_sample_context_kwargs(session)
+        context_kwargs["confirm_url"] = "https://example.fief.dev/register/confirm"
+        return context_kwargs
+
+
+class ExistingAccountRegistrationContext(EmailContext):
+    login_url: str
+    forgot_password_url: str
+
+    @classmethod
+    async def _get_sample_context_kwargs(cls, session: AsyncSession) -> dict[str, Any]:
+        context_kwargs = await super()._get_sample_context_kwargs(session)
+        context_kwargs["login_url"] = "https://example.fief.dev/login"
+        context_kwargs["forgot_password_url"] = "https://example.fief.dev/forgot"
+        return context_kwargs
+
+
 EMAIL_TEMPLATE_CONTEXT_CLASS_MAP: dict[EmailTemplateType, type[EmailContext]] = {
     EmailTemplateType.BASE: EmailContext,
     EmailTemplateType.WELCOME: WelcomeContext,
     EmailTemplateType.VERIFY_EMAIL: VerifyEmailContext,
     EmailTemplateType.FORGOT_PASSWORD: ForgotPasswordContext,
+    EmailTemplateType.CONFIRM_REGISTRATION: ConfirmRegistrationContext,
+    EmailTemplateType.EXISTING_ACCOUNT_REGISTRATION: ExistingAccountRegistrationContext,
 }

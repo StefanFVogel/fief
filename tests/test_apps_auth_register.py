@@ -5,7 +5,9 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 from fastapi import status
+from furl import furl
 
+from fief.crypto.password import password_helper
 from fief.crypto.token import get_token_hash
 from fief.db import AsyncSession
 from fief.models import RegistrationSessionFlow, UserField, UserFieldType
@@ -16,8 +18,13 @@ from fief.repositories import (
     UserRepository,
 )
 from fief.settings import settings
-from fief.tasks import on_after_register
+from fief.tasks import (
+    on_after_register,
+    on_existing_account_registration,
+    on_registration_confirmation_requested,
+)
 from tests.data import TestData
+from tests.helpers import str_match
 from tests.types import TenantParams
 
 
@@ -305,9 +312,12 @@ class TestPostRegister:
         test_client_auth_csrf: httpx.AsyncClient,
         csrf_token: str,
         test_data: TestData,
+        main_session: AsyncSession,
+        send_task_mock: MagicMock,
     ):
         login_session = test_data["login_sessions"]["default"]
         registration_session = test_data["registration_sessions"]["default_password"]
+        user = test_data["users"]["regular"]
         cookies = {}
         cookies[settings.login_session_cookie_name] = login_session.token
         cookies[settings.registration_session_cookie_name] = registration_session.token
@@ -316,16 +326,61 @@ class TestPostRegister:
             "/register",
             data={
                 "email": "anne@bretagne.duchy",
-                "password": "herminetincture",
+                "password": "newherminetincture",
                 "csrf_token": csrf_token,
             },
             cookies=cookies,
         )
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_200_OK
+        assert "X-Fief-Error" not in response.headers
+        assert settings.session_cookie_name not in response.cookies
 
-        headers = response.headers
-        assert headers["X-Fief-Error"] == "user_already_exists"
+        send_task_mock.assert_called_once_with(
+            on_existing_account_registration,
+            str(user.id),
+            str_match(r"/login$"),
+            str_match(r"/forgot$"),
+        )
+
+        user_repository = UserRepository(main_session)
+        existing_user = await user_repository.get_by_id(user.id)
+        assert existing_user is not None
+        assert existing_user.hashed_password == user.hashed_password
+
+    async def test_existing_and_new_user_same_response(
+        self,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+    ):
+        login_session = test_data["login_sessions"]["default"]
+        texts = []
+        for email, registration_session in (
+            ("anne@bretagne.duchy", "default_password"),
+            ("louis@bretagne.duchy", "default_password_2"),
+        ):
+            cookies = {}
+            cookies[settings.login_session_cookie_name] = login_session.token
+            cookies[settings.registration_session_cookie_name] = test_data[
+                "registration_sessions"
+            ][registration_session].token
+
+            response = await test_client_auth_csrf.post(
+                "/register",
+                data={
+                    "email": email,
+                    "password": "herminetincture",
+                    "csrf_token": csrf_token,
+                },
+                cookies=cookies,
+            )
+
+            assert response.status_code == status.HTTP_200_OK
+            assert settings.session_cookie_name not in response.cookies
+            texts.append(response.text.replace(email, ""))
+
+        assert texts[0] == texts[1]
 
     async def test_new_user(
         self,
@@ -351,9 +406,36 @@ class TestPostRegister:
             cookies=cookies,
         )
 
-        assert response.status_code == status.HTTP_302_FOUND
+        assert response.status_code == status.HTTP_200_OK
+        assert settings.session_cookie_name not in response.cookies
 
-        redirect_uri = response.headers["Location"]
+        user_repository = UserRepository(main_session)
+        tenant = test_data["tenants"]["default"]
+        assert (
+            await user_repository.get_by_email_and_tenant(
+                "louis@bretagne.duchy", tenant.id
+            )
+            is None
+        )
+
+        registration_session_repository = RegistrationSessionRepository(main_session)
+        deleted_registration_session = await registration_session_repository.get_by_id(
+            registration_session.id
+        )
+        assert deleted_registration_session is None
+
+        send_task_mock.assert_called_once_with(
+            on_registration_confirmation_requested,
+            str(tenant.id),
+            "louis@bretagne.duchy",
+            str_match(r"/register/confirm\?token="),
+        )
+
+        response = await confirm_registration(
+            test_client_auth_csrf, send_task_mock, cookies=cookies
+        )
+
+        assert response.status_code == status.HTTP_302_FOUND
         redirect_uri = response.headers["Location"]
         assert redirect_uri.endswith("/verify-request")
 
@@ -364,28 +446,164 @@ class TestPostRegister:
         )
         assert session_token is not None
 
-        user_repository = UserRepository(main_session)
         user = await user_repository.get_by_id(session_token.user_id)
         assert user is not None
         assert user.email == "louis@bretagne.duchy"
-        assert user.email_verified is False
+        assert user.email_verified is True
+        assert password_helper.verify_and_update(
+            "herminetincture", user.hashed_password
+        )[0]
 
         login_hint_cookie = response.cookies[settings.login_hint_cookie_name]
         assert urllib.parse.unquote(login_hint_cookie) == "louis@bretagne.duchy"
 
-        registration_session_repository = RegistrationSessionRepository(main_session)
-        deleted_registration_session = await registration_session_repository.get_by_id(
-            registration_session.id
-        )
-        assert deleted_registration_session is None
-
         send_task_mock.assert_called_with(on_after_register, str(session_token.user_id))
 
+    async def test_too_many_requests(
+        self,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+        send_task_mock: MagicMock,
+    ):
+        login_session = test_data["login_sessions"]["default"]
+        for registration_session in (
+            "default_password",
+            "default_password_2",
+            "default_password_3",
+        ):
+            cookies = {}
+            cookies[settings.login_session_cookie_name] = login_session.token
+            cookies[settings.registration_session_cookie_name] = test_data[
+                "registration_sessions"
+            ][registration_session].token
+
+            response = await test_client_auth_csrf.post(
+                "/register",
+                data={
+                    "email": "louis@bretagne.duchy",
+                    "password": "herminetincture",
+                    "csrf_token": csrf_token,
+                },
+                cookies=cookies,
+            )
+            assert response.status_code == status.HTTP_200_OK
+
+        assert send_task_mock.call_count == 2
+
+
+@pytest.mark.asyncio
+class TestGetRegisterConfirm:
+    async def test_invalid_token(
+        self, tenant_params: TenantParams, test_client_auth: httpx.AsyncClient
+    ):
+        response = await test_client_auth.get(
+            f"{tenant_params.path_prefix}/register/confirm",
+            params={"token": "INVALID_TOKEN"},
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.headers["X-Fief-Error"] == "invalid_token"
+
+    async def test_expired_token(
+        self,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+        send_task_mock: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        await request_registration(
+            test_client_auth_csrf, csrf_token, test_data, "louis@bretagne.duchy"
+        )
+        monkeypatch.setattr(settings, "registration_confirmation_lifetime_seconds", -1)
+
+        response = await confirm_registration(test_client_auth_csrf, send_task_mock)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.headers["X-Fief-Error"] == "invalid_token"
+
+    async def test_other_tenant(
+        self,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+        send_task_mock: MagicMock,
+    ):
+        await request_registration(
+            test_client_auth_csrf, csrf_token, test_data, "louis@bretagne.duchy"
+        )
+        confirm_url = furl(send_task_mock.call_args.args[-1])
+        token = confirm_url.args["token"]
+
+        response = await test_client_auth_csrf.get(
+            f"/{test_data['tenants']['secondary'].slug}/register/confirm",
+            params={"token": token},
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.headers["X-Fief-Error"] == "invalid_token"
+
+    async def test_already_used(
+        self,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+        send_task_mock: MagicMock,
+    ):
+        await request_registration(
+            test_client_auth_csrf, csrf_token, test_data, "louis@bretagne.duchy"
+        )
+        confirm_url = send_task_mock.call_args.args[-1]
+
+        response = await confirm_registration(test_client_auth_csrf, send_task_mock)
+        assert response.status_code == status.HTTP_302_FOUND
+
+        response = await test_client_auth_csrf.get(_get_path(confirm_url))
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.headers["X-Fief-Error"] == "invalid_token"
+
+    @pytest.mark.parametrize(
+        "has_login_session,redirect_path",
+        [
+            (True, "/verify-request"),
+            (False, "/verify-request"),
+        ],
+    )
+    async def test_without_registration_cookies(
+        self,
+        has_login_session: bool,
+        redirect_path: str,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+        send_task_mock: MagicMock,
+    ):
+        await request_registration(
+            test_client_auth_csrf, csrf_token, test_data, "louis@bretagne.duchy"
+        )
+
+        cookies = {}
+        if has_login_session:
+            login_session = test_data["login_sessions"]["default"]
+            cookies[settings.login_session_cookie_name] = login_session.token
+        response = await confirm_registration(
+            test_client_auth_csrf, send_task_mock, cookies=cookies
+        )
+
+        assert response.status_code == status.HTTP_302_FOUND
+        assert response.headers["Location"].endswith(redirect_path)
+        assert settings.session_cookie_name in response.cookies
+
+
+@pytest.mark.asyncio
+class TestPostRegisterFields:
     async def test_no_email_conflict_on_another_tenant(
         self,
         test_client_auth_csrf: httpx.AsyncClient,
         csrf_token: str,
         test_data: TestData,
+        send_task_mock: MagicMock,
     ):
         login_session = test_data["login_sessions"]["secondary"]
         registration_session = test_data["registration_sessions"]["secondary_password"]
@@ -403,6 +621,9 @@ class TestPostRegister:
             cookies=cookies,
         )
 
+        assert response.status_code == status.HTTP_200_OK
+
+        response = await confirm_registration(test_client_auth_csrf, send_task_mock)
         assert response.status_code == status.HTTP_302_FOUND
 
     async def test_registration_fields_set(
@@ -411,6 +632,7 @@ class TestPostRegister:
         csrf_token: str,
         test_data: TestData,
         main_session: AsyncSession,
+        send_task_mock: MagicMock,
     ):
         login_session = test_data["login_sessions"]["secondary"]
         registration_session = test_data["registration_sessions"]["secondary_password"]
@@ -433,6 +655,9 @@ class TestPostRegister:
             cookies=cookies,
         )
 
+        assert response.status_code == status.HTTP_200_OK
+
+        response = await confirm_registration(test_client_auth_csrf, send_task_mock)
         assert response.status_code == status.HTTP_302_FOUND
 
         session_cookie = response.cookies[settings.session_cookie_name]
@@ -463,7 +688,7 @@ class TestPostRegister:
         [
             ({}, status.HTTP_400_BAD_REQUEST),
             ({"fields.terms": ""}, status.HTTP_400_BAD_REQUEST),
-            ({"fields.terms": "on"}, status.HTTP_302_FOUND),
+            ({"fields.terms": "on"}, status.HTTP_200_OK),
         ],
     )
     async def test_required_boolean_field(
@@ -515,6 +740,7 @@ class TestPostRegister:
         csrf_token: str,
         test_data: TestData,
         main_session: AsyncSession,
+        send_task_mock: MagicMock,
     ):
         login_session = test_data["login_sessions"]["secondary"]
         registration_session = test_data["registration_sessions"]["secondary_password"]
@@ -533,6 +759,9 @@ class TestPostRegister:
             cookies=cookies,
         )
 
+        assert response.status_code == status.HTTP_200_OK
+
+        response = await confirm_registration(test_client_auth_csrf, send_task_mock)
         assert response.status_code == status.HTTP_302_FOUND
 
         session_cookie = response.cookies[settings.session_cookie_name]
@@ -549,6 +778,9 @@ class TestPostRegister:
             "onboarding_done": False,  # Default value
         }
 
+
+@pytest.mark.asyncio
+class TestPostRegisterOAuth:
     async def test_new_user_oauth(
         self,
         test_client_auth_csrf: httpx.AsyncClient,
@@ -574,7 +806,6 @@ class TestPostRegister:
 
         assert response.status_code == status.HTTP_302_FOUND
 
-        redirect_uri = response.headers["Location"]
         redirect_uri = response.headers["Location"]
         assert redirect_uri.endswith("/verify-request")
 
@@ -610,6 +841,7 @@ class TestPostRegister:
         csrf_token: str,
         test_data: TestData,
         main_session: AsyncSession,
+        send_task_mock: MagicMock,
     ):
         login_session = test_data["login_sessions"]["default"]
         registration_session = test_data["registration_sessions"]["default_oauth"]
@@ -626,6 +858,12 @@ class TestPostRegister:
             cookies=cookies,
         )
 
+        assert response.status_code == status.HTTP_200_OK
+        assert settings.session_cookie_name not in response.cookies
+
+        response = await confirm_registration(
+            test_client_auth_csrf, send_task_mock, cookies=cookies
+        )
         assert response.status_code == status.HTTP_302_FOUND
 
         session_cookie = response.cookies[settings.session_cookie_name]
@@ -639,4 +877,72 @@ class TestPostRegister:
         user = await user_repository.get_by_id(session_token.user_id)
         assert user is not None
         assert user.email == "louis+fief@bretagne.duchy"
-        assert user.email_verified is False
+        assert user.email_verified is True
+
+        oauth_account_repository = OAuthAccountRepository(main_session)
+        assert registration_session.oauth_account_id is not None
+        oauth_account = await oauth_account_repository.get_by_id(
+            registration_session.oauth_account_id
+        )
+        assert oauth_account is not None
+        assert oauth_account.user_id == user.id
+
+    async def test_existing_user_oauth_override_default_email(
+        self,
+        test_client_auth_csrf: httpx.AsyncClient,
+        csrf_token: str,
+        test_data: TestData,
+        send_task_mock: MagicMock,
+    ):
+        login_session = test_data["login_sessions"]["default"]
+        registration_session = test_data["registration_sessions"]["default_oauth"]
+        cookies = {}
+        cookies[settings.login_session_cookie_name] = login_session.token
+        cookies[settings.registration_session_cookie_name] = registration_session.token
+
+        response = await test_client_auth_csrf.post(
+            "/register",
+            data={
+                "email": "anne@bretagne.duchy",
+                "csrf_token": csrf_token,
+            },
+            cookies=cookies,
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "X-Fief-Error" not in response.headers
+        assert send_task_mock.call_args.args[0] == on_existing_account_registration
+
+
+def _get_path(url: str) -> str:
+    parsed_url = furl(url)
+    return f"{parsed_url.path}?{parsed_url.query}"
+
+
+async def request_registration(
+    test_client: httpx.AsyncClient, csrf_token: str, test_data: TestData, email: str
+) -> httpx.Response:
+    login_session = test_data["login_sessions"]["default"]
+    registration_session = test_data["registration_sessions"]["default_password"]
+    cookies = {}
+    cookies[settings.login_session_cookie_name] = login_session.token
+    cookies[settings.registration_session_cookie_name] = registration_session.token
+
+    response = await test_client.post(
+        "/register",
+        data={"email": email, "password": "herminetincture", "csrf_token": csrf_token},
+        cookies=cookies,
+    )
+    assert response.status_code == status.HTTP_200_OK
+    return response
+
+
+async def confirm_registration(
+    test_client: httpx.AsyncClient,
+    send_task_mock: MagicMock,
+    *,
+    cookies: dict[str, str] | None = None,
+) -> httpx.Response:
+    assert send_task_mock.call_args.args[0] == on_registration_confirmation_requested
+    confirm_url = send_task_mock.call_args.args[-1]
+    return await test_client.get(_get_path(confirm_url), cookies=cookies)
