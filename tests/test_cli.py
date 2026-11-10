@@ -1,12 +1,15 @@
 import os
 import subprocess
 import sys
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import call, patch
 
 import pytest
+from sqlalchemy.engine import URL
 from typer.testing import CliRunner
 
 from fief.cli.__main__ import app
+from fief.cli.admin import chown_sqlite_database, engine
 from fief.settings import settings
 
 HELP_TIMEOUT_SECONDS = 60
@@ -99,3 +102,100 @@ def test_info_masks_sensitive_settings(monkeypatch: pytest.MonkeyPatch):
         "reset_password_token_lifetime_seconds: "
         f"{settings.reset_password_token_lifetime_seconds}"
     ) in result.output
+
+
+class TestChownSQLiteDatabase:
+    @pytest.fixture
+    def sqlite_url(self, tmp_path: Path) -> URL:
+        return URL.create("sqlite+aiosqlite", database=str(tmp_path / "fief.db"))
+
+    def test_root_sqlite(self, tmp_path: Path, sqlite_url: URL):
+        for name in ["fief.db", "fief.db-wal", "fief.db-shm"]:
+            (tmp_path / name).touch()
+        directory_stat = os.stat(tmp_path)
+
+        with (
+            patch("os.geteuid", return_value=0, create=True),
+            patch("os.chown", create=True) as chown,
+        ):
+            chown_sqlite_database(sqlite_url)
+
+        assert chown.call_args_list == [
+            call(
+                str(tmp_path / name),
+                directory_stat.st_uid,
+                directory_stat.st_gid,
+                follow_symlinks=False,
+            )
+            for name in ["fief.db", "fief.db-wal", "fief.db-shm"]
+        ]
+
+    def test_root_sqlite_symlink(self, tmp_path: Path, sqlite_url: URL):
+        (tmp_path / "fief.db").touch()
+        (tmp_path / "target").touch()
+        (tmp_path / "fief.db-journal").symlink_to(tmp_path / "target")
+        directory_stat = os.stat(tmp_path)
+
+        with (
+            patch("os.geteuid", return_value=0, create=True),
+            patch("os.chown", create=True) as chown,
+        ):
+            chown_sqlite_database(sqlite_url)
+
+        assert chown.call_args_list == [
+            call(
+                str(tmp_path / name),
+                directory_stat.st_uid,
+                directory_stat.st_gid,
+                follow_symlinks=False,
+            )
+            for name in ["fief.db", "fief.db-journal"]
+        ]
+
+    def test_root_sqlite_missing_file(self, sqlite_url: URL):
+        with (
+            patch("os.geteuid", return_value=0, create=True),
+            patch("os.chown", create=True) as chown,
+        ):
+            chown_sqlite_database(sqlite_url)
+
+        chown.assert_not_called()
+
+    def test_not_root(self, tmp_path: Path, sqlite_url: URL):
+        (tmp_path / "fief.db").touch()
+
+        with (
+            patch("os.geteuid", return_value=1000, create=True),
+            patch("os.chown", create=True) as chown,
+        ):
+            chown_sqlite_database(sqlite_url)
+
+        chown.assert_not_called()
+
+    def test_not_sqlite(self, tmp_path: Path):
+        (tmp_path / "fief.db").touch()
+        url = URL.create(
+            "postgresql+asyncpg", host="localhost", database=str(tmp_path / "fief.db")
+        )
+
+        with (
+            patch("os.geteuid", return_value=0, create=True),
+            patch("os.chown", create=True) as chown,
+        ):
+            chown_sqlite_database(url)
+
+        chown.assert_not_called()
+
+
+def test_migrate_chowns_sqlite_database():
+    with (
+        patch("fief.cli.admin.migrate_schema") as migrate_schema,
+        patch("fief.cli.admin.initializer.init_all") as init_all,
+        patch("fief.cli.admin.chown_sqlite_database") as chown_sqlite_database,
+    ):
+        result = CliRunner().invoke(app, ["migrate"])
+
+    assert result.exit_code == 0, result.output
+    migrate_schema.assert_awaited_once()
+    init_all.assert_awaited_once()
+    chown_sqlite_database.assert_called_once_with(engine.url)
