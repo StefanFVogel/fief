@@ -60,6 +60,7 @@ class AuthenticationFlow:
         acr: ACR,
         code_challenge_tuple: tuple[str, str] | None,
         client: Client,
+        prompt: str | None,
     ) -> ResponseType:
         login_session = LoginSession(
             response_type=response_type,
@@ -69,6 +70,7 @@ class AuthenticationFlow:
             state=state,
             nonce=nonce,
             acr=acr,
+            prompt=prompt,
             client_id=client.id,
         )
         if code_challenge_tuple is not None:
