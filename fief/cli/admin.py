@@ -1,10 +1,12 @@
 import asyncio
 import functools
 import os
+import re
 
 import typer
 import uvicorn
 from dramatiq import cli as dramatiq_cli
+from pydantic import SecretStr
 
 from fief import __version__
 from fief.db.main import create_main_engine
@@ -30,6 +32,26 @@ def asyncio_command(f):
 
 engine = create_main_engine()
 initializer = Initializer(engine, settings)
+
+MASKED_VALUE = "**********"
+SENSITIVE_SETTING_NAME_REGEX = re.compile(
+    r"(^|_)(secret|password|key|token|dsn|params)(_|$)"
+)
+URL_CREDENTIALS_REGEX = re.compile(r"(://[^:@/]*:)[^/]*@")
+
+
+def mask_setting_value(key: str, value):
+    if isinstance(value, SecretStr):
+        return MASKED_VALUE
+    if (
+        SENSITIVE_SETTING_NAME_REGEX.search(key)
+        and value is not None
+        and not isinstance(value, int)
+    ):
+        return MASKED_VALUE
+    if isinstance(value, str):
+        return URL_CREDENTIALS_REGEX.sub(rf"\1{MASKED_VALUE}@", value)
+    return value
 
 
 def add_commands(app: typer.Typer) -> typer.Typer:
@@ -106,7 +128,7 @@ def add_commands(app: typer.Typer) -> typer.Typer:
         typer.secho(f"Fief version: {__version__}", bold=True)
         typer.secho("Settings", bold=True)
         for key, value in settings.model_dump().items():
-            typer.echo(f"{key}: {value}")
+            typer.echo(f"{key}: {mask_setting_value(key, value)}")
 
     @app.command("migrate")
     @asyncio_command

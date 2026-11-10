@@ -1,13 +1,28 @@
 import functools
 import http.cookies
+import secrets
 
 from starlette.datastructures import MutableHeaders
+from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from fief.settings import settings
 
 CSRF_ATTRIBUTE_NAME = "csrftoken"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
+CSRF_HEADER_NAME = "X-CSRFToken"
+CSRF_FORM_FIELD_NAME = "csrf_token"
+
+
+def get_csrf_token(request: Request) -> str:
+    csrf_token: str | None = request.cookies.get(
+        settings.csrf_cookie_name
+    ) or request.scope.get(CSRF_ATTRIBUTE_NAME)
+    if csrf_token is None:
+        csrf_token = secrets.token_urlsafe()
+        # Will be catched by CSRFCookieSetterMiddleware and set in cookies
+        request.scope[CSRF_ATTRIBUTE_NAME] = csrf_token
+    return csrf_token
 
 
 class CSRFCookieSetterMiddleware:
