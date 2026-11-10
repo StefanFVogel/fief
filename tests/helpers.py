@@ -9,17 +9,36 @@ import pytest
 from fastapi import status
 from furl import furl
 from jwcrypto import jwk, jwt
+from sqlalchemy import select
 
 from fief.crypto.id_token import get_validation_hash
 from fief.crypto.token import get_token_hash
 from fief.crypto.verify_code import get_verify_code_hash
 from fief.db import AsyncSession
-from fief.models import AuthorizationCode, LoginSession, SessionToken, User
+from fief.models import (
+    AuthorizationCode,
+    LoginSession,
+    RefreshToken,
+    SessionToken,
+    User,
+)
 from fief.repositories import AuthorizationCodeRepository, EmailVerificationRepository
 from fief.services.acr import ACR
 from fief.tasks import on_email_verification_requested
 
 HTTPXResponseAssertion = Callable[[httpx.Response], None]
+
+
+async def get_user_tokens(
+    main_session: AsyncSession, user: User
+) -> tuple[list[SessionToken], list[RefreshToken]]:
+    session_tokens = await main_session.scalars(
+        select(SessionToken).where(SessionToken.user_id == user.id)
+    )
+    refresh_tokens = await main_session.scalars(
+        select(RefreshToken).where(RefreshToken.user_id == user.id)
+    )
+    return list(session_tokens), list(refresh_tokens)
 
 
 class StringMatch:

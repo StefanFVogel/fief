@@ -651,6 +651,32 @@ class TestAuthTokenAuthorizationCode:
             access_token=json["access_token"],
         )
 
+    @pytest.mark.parametrize("auth_method", AUTH_METHODS)
+    async def test_inactive_user(
+        self, auth_method: str, test_client_auth: httpx.AsyncClient, test_data: TestData
+    ):
+        authorization_code = test_data["authorization_codes"]["default_inactive"]
+        client = authorization_code.client
+        tenant = client.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
+
+        headers, data = get_authenticated_request_headers_data(auth_method, client)
+        response = await test_client_auth.post(
+            f"{path_prefix}/api/token",
+            headers=headers,
+            data={
+                **data,
+                "grant_type": "authorization_code",
+                "code": authorization_code_codes["default_inactive"][0],
+                "redirect_uri": authorization_code.redirect_uri,
+            },
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        json = response.json()
+        assert json["error"] == "invalid_grant"
+
 
 @pytest.mark.asyncio
 class TestAuthTokenRefreshToken:
@@ -947,3 +973,28 @@ class TestAuthTokenRefreshToken:
         )
 
         assert response.status_code == status.HTTP_200_OK
+
+    @pytest.mark.parametrize("auth_method", AUTH_METHODS)
+    async def test_inactive_user(
+        self, auth_method: str, test_client_auth: httpx.AsyncClient, test_data: TestData
+    ):
+        refresh_token = test_data["refresh_tokens"]["default_inactive"]
+        client = refresh_token.client
+        tenant = client.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
+
+        headers, data = get_authenticated_request_headers_data(auth_method, client)
+        response = await test_client_auth.post(
+            f"{path_prefix}/api/token",
+            headers=headers,
+            data={
+                **data,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token_tokens["default_inactive"][0],
+            },
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        json = response.json()
+        assert json["error"] == "invalid_grant"

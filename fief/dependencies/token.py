@@ -200,8 +200,13 @@ async def get_user_from_grant_request(
     user_manager: UserManager = Depends(get_user_manager),
 ) -> User:
     try:
-        return await user_manager.get(
+        user = await user_manager.get(
             grant_request["user_id"], grant_request["client"].tenant_id
         )
     except UserDoesNotExistError as e:
         raise TokenRequestException(TokenError.get_invalid_grant()) from e
+
+    if not user.is_active:
+        raise TokenRequestException(TokenError.get_invalid_grant())
+
+    return user

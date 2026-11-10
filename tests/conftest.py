@@ -28,7 +28,7 @@ from fief.dependencies.rate_limit import get_rate_limiter
 from fief.dependencies.tasks import get_send_task
 from fief.dependencies.tenant_email_domain import get_tenant_email_domain
 from fief.dependencies.theme import get_theme_preview
-from fief.models import AdminAPIKey, AdminSessionToken, User
+from fief.models import AdminAPIKey, AdminSessionToken, SessionToken, User
 from fief.services.rate_limit import RateLimiter
 from fief.services.tenant_email_domain import TenantEmailDomain
 from fief.services.theme_preview import ThemePreview
@@ -190,6 +190,18 @@ async def create_admin_session_token(
         raw_tokens="{}",
         raw_userinfo=json.dumps(user.get_claims()),
     )
+    main_session.add(session_token)
+
+    await main_session.commit()
+
+    return session_token, token
+
+
+async def create_session_token(
+    user: User, main_session: AsyncSession
+) -> tuple[SessionToken, str]:
+    token, token_hash = generate_token()
+    session_token = SessionToken(token=token_hash, user_id=user.id)
     main_session.add(session_token)
 
     await main_session.commit()

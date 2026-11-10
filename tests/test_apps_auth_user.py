@@ -13,8 +13,10 @@ from fief.db import AsyncSession
 from fief.errors import APIErrorCode
 from fief.repositories import EmailVerificationRepository, UserRepository
 from fief.services.acr import ACR
+from fief.settings import settings
+from tests.conftest import create_session_token
 from tests.data import TestData, email_verification_codes
-from tests.helpers import email_verification_requested_assertions
+from tests.helpers import email_verification_requested_assertions, get_user_tokens
 from tests.types import TenantParams
 
 
@@ -366,6 +368,78 @@ class TestUserChangePassword:
         )
 
         assert response.status_code == status.HTTP_200_OK
+
+    @pytest.mark.access_token(from_tenant_params=True, acr=ACR.LEVEL_ONE)
+    async def test_valid_revokes_tokens(
+        self,
+        tenant_params: TenantParams,
+        test_client_auth_access_token: httpx.AsyncClient,
+        main_session: AsyncSession,
+    ):
+        response = await test_client_auth_access_token.patch(
+            f"{tenant_params.path_prefix}/api/password",
+            json={"password": "newherminetincture"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+        session_tokens, refresh_tokens = await get_user_tokens(
+            main_session, tenant_params.user
+        )
+        assert session_tokens == []
+        assert refresh_tokens == []
+
+    @pytest.mark.access_token(from_tenant_params=True, acr=ACR.LEVEL_ONE)
+    async def test_valid_keeps_current_session(
+        self,
+        tenant_params: TenantParams,
+        test_client_auth_access_token: httpx.AsyncClient,
+        main_session: AsyncSession,
+    ):
+        await create_session_token(tenant_params.user, main_session)
+
+        cookies = {}
+        cookies[settings.session_cookie_name] = tenant_params.session_token_token[0]
+        response = await test_client_auth_access_token.patch(
+            f"{tenant_params.path_prefix}/api/password",
+            cookies=cookies,
+            json={"password": "newherminetincture"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+        session_tokens, refresh_tokens = await get_user_tokens(
+            main_session, tenant_params.user
+        )
+        assert [session_token.id for session_token in session_tokens] == [
+            tenant_params.session_token.id
+        ]
+        assert refresh_tokens == []
+
+    @pytest.mark.access_token(from_tenant_params=True, acr=ACR.LEVEL_ONE)
+    async def test_valid_ignores_foreign_session(
+        self,
+        tenant_params: TenantParams,
+        test_client_auth_access_token: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        _, foreign_token = await create_session_token(
+            test_data["users"]["regular_default_2"], main_session
+        )
+
+        cookies = {}
+        cookies[settings.session_cookie_name] = foreign_token
+        response = await test_client_auth_access_token.patch(
+            f"{tenant_params.path_prefix}/api/password",
+            cookies=cookies,
+            json={"password": "newherminetincture"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+        session_tokens, _ = await get_user_tokens(main_session, tenant_params.user)
+        assert session_tokens == []
 
     async def test_id_token(
         self,
