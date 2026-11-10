@@ -18,13 +18,18 @@ from fief.apps.dashboard.routers.user_fields import router as user_fields_router
 from fief.apps.dashboard.routers.users import router as users_router
 from fief.apps.dashboard.routers.webhooks import router as webhooks_router
 from fief.dependencies.admin_authentication import is_authenticated_admin_session
+from fief.dependencies.csrf import check_csrf_token
 from fief.middlewares.csrf import CSRFCookieSetterMiddleware
 from fief.middlewares.security_headers import SecurityHeadersMiddleware
 from fief.paths import STATIC_DIRECTORY
 from fief.settings import settings
 from fief.templates import templates
 
-app = FastAPI(title="Fief Administration Dashboard", openapi_url=None)
+app = FastAPI(
+    title="Fief Administration Dashboard",
+    openapi_url=None,
+    dependencies=[Depends(check_csrf_token)],
+)
 
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(CSRFCookieSetterMiddleware)

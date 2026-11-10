@@ -358,6 +358,7 @@ async def test_client_dashboard(
 ) -> AsyncGenerator[httpx.AsyncClient, None]:
     async with test_client_generator(dashboard_app) as test_client:
         test_client.cookies.set(settings.csrf_cookie_name, csrf_token)
+        test_client.headers["X-CSRFToken"] = csrf_token
         test_client = htmx(test_client)
         yield test_client
 
