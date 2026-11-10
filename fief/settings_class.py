@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import (
@@ -9,6 +9,7 @@ from pydantic import (
     DirectoryPath,
     EmailStr,
     Field,
+    IPvAnyNetwork,
     SecretStr,
     field_validator,
     model_validator,
@@ -74,6 +75,7 @@ class Settings(BaseSettings):
     database_table_prefix: str = "fief_"
 
     redis_url: str = "redis://localhost:6379"
+    redis_ssl_cert_reqs: Literal["required", "optional", "none"] = "required"
 
     email_provider: AvailableEmailProvider = AvailableEmailProvider.NULL
     email_provider_params: dict[str, Any] = Field(default_factory=dict)
@@ -121,6 +123,9 @@ class Settings(BaseSettings):
     rate_limit_max_wait_seconds: int = 900
     rate_limit_counter_lifetime_seconds: int = 86400
 
+    oauth_session_cookie_name: str = "fief_oauth_session"
+    oauth_session_cookie_domain: str = ""
+    oauth_session_cookie_secure: bool = True
     oauth_session_lifetime_seconds: int = 3600
 
     session_cookie_name: str = "fief_session"
@@ -135,6 +140,8 @@ class Settings(BaseSettings):
     default_refresh_token_lifetime_seconds: int = 3600 * 24 * 30
 
     webhooks_max_attempts: int = 5
+    webhooks_allowed_networks: list[IPvAnyNetwork] = []
+    webhooks_max_response_log_size: int = 4096
 
     logout_allowed_origins: list[AnyHttpUrl] = []
 
@@ -149,6 +156,12 @@ class Settings(BaseSettings):
     fief_admin_session_cookie_name: str = "fief_admin_session"
     fief_admin_session_cookie_domain: str = ""
     fief_admin_session_cookie_secure: bool = True
+    fief_admin_session_lifetime_seconds: int = 3600 * 2
+    fief_admin_session_idle_timeout_seconds: int = 60 * 30
+    fief_admin_state_cookie_name: str = "fief_admin_state"
+    fief_admin_state_cookie_domain: str = ""
+    fief_admin_state_cookie_secure: bool = True
+    fief_admin_state_cookie_lifetime_seconds: int = 3600
 
     fief_documentation_url: str = "https://docs.fief.dev"
 

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from fastapi import Request
 from furl import furl
 from jwcrypto import jwt
+from jwcrypto.common import JWException
 from pydantic import UUID4
 
 from fief import schemas
@@ -239,6 +240,7 @@ class UserManager:
             claims = json.loads(decoded_token.claims)
         except (
             ValueError,
+            JWException,
             jwt.JWTExpired,
             jwt.JWTMissingClaim,
             jwt.JWTInvalidClaimValue,

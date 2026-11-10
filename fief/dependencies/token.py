@@ -9,9 +9,10 @@ from pydantic import UUID4
 from fief.crypto.code_challenge import verify_code_verifier
 from fief.crypto.token import get_token_hash
 from fief.dependencies.repositories import get_repository
+from fief.dependencies.tenant import get_current_tenant
 from fief.dependencies.users import get_user_manager
 from fief.exceptions import TokenRequestException
-from fief.models import Client, ClientType, User
+from fief.models import Client, ClientType, Tenant, User
 from fief.repositories import (
     AuthorizationCodeRepository,
     ClientRepository,
@@ -91,15 +92,12 @@ async def authenticate_client(
     client_secret_basic: Client | None = Depends(authenticate_client_secret_basic),
     client_secret_post: Client | None = Depends(authenticate_client_secret_post),
     client_none: Client | None = Depends(authenticate_none),
+    tenant: Tenant = Depends(get_current_tenant),
 ) -> Client:
-    if client_secret_basic is not None:
-        return client_secret_basic
+    client = client_secret_basic or client_secret_post or client_none
 
-    if client_secret_post is not None:
-        return client_secret_post
-
-    if client_none is not None:
-        return client_none
+    if client is not None and client.tenant_id == tenant.id:
+        return client
 
     raise TokenRequestException(TokenError.get_invalid_client())
 
@@ -148,6 +146,9 @@ async def validate_grant_request(
         elif code_verifier is not None:
             raise TokenRequestException(TokenError.get_invalid_grant())
 
+        if not await authorization_code_repository.consume(authorization_code):
+            raise TokenRequestException(TokenError.get_invalid_grant())
+
         yield {
             "user_id": authorization_code.user_id,
             "scope": authorization_code.scope,
@@ -158,8 +159,6 @@ async def validate_grant_request(
             "client": client,
             "grant_type": grant_type,
         }
-
-        await authorization_code_repository.delete(authorization_code)
         return
     elif grant_type == "refresh_token":
         if refresh_token_token is None:
@@ -178,6 +177,9 @@ async def validate_grant_request(
         if not set(new_scope).issubset(set(refresh_token.scope)):
             raise TokenRequestException(TokenError.get_invalid_scope())
 
+        if not await refresh_token_repository.consume(refresh_token):
+            raise TokenRequestException(TokenError.get_invalid_grant())
+
         yield {
             "user_id": refresh_token.user_id,
             "scope": new_scope,
@@ -188,8 +190,6 @@ async def validate_grant_request(
             "client": client,
             "grant_type": grant_type,
         }
-
-        await refresh_token_repository.delete(refresh_token)
         return
 
     raise TokenRequestException(TokenError.get_unsupported_grant_type())

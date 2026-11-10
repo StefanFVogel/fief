@@ -14,6 +14,7 @@ from fief.repositories import (
     GrantRepository,
     LoginSessionRepository,
     SessionTokenRepository,
+    ThemeRepository,
     UserRepository,
 )
 from fief.services.acr import ACR
@@ -420,11 +421,20 @@ class TestAuthAuthorize:
         assert location.endswith(f"{tenant_params.path_prefix}{redirection}")
 
         login_session_cookie = response.cookies[settings.login_session_cookie_name]
+        set_cookie_header = next(
+            header
+            for header in response.headers.get_list("Set-Cookie")
+            if header.startswith(f"{settings.login_session_cookie_name}=")
+        )
+        assert "httponly" in set_cookie_header.lower()
+
         login_session_repository = LoginSessionRepository(main_session)
         login_session = await login_session_repository.get_by_token(
             login_session_cookie
         )
         assert login_session is not None
+
+        assert login_session.prompt == params.get("prompt")
 
         if "nonce" in params:
             assert login_session.nonce == params["nonce"]
@@ -553,6 +563,51 @@ class TestAuthGetLogin:
         response = await test_client_auth.get(f"{path_prefix}/login", cookies=cookies)
 
         assert response.status_code == status.HTTP_200_OK
+
+    @pytest.mark.parametrize(
+        "font_family,expected",
+        [
+            ("'Inter', sans-serif", "font-family: 'Inter', sans-serif;"),
+            (
+                "</style><script>alert(1)</script><style>",
+                "font-family: stylescriptalert1scriptstyle;",
+            ),
+            ("Inter;} body { color: red", "font-family: Inter body  color red;"),
+        ],
+    )
+    async def test_theme_font_family(
+        self,
+        font_family: str,
+        expected: str,
+        test_client_auth: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        login_session = test_data["login_sessions"]["default"]
+        client = login_session.client
+        tenant = client.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
+
+        theme_repository = ThemeRepository(main_session)
+        if tenant.theme_id is not None:
+            theme = await theme_repository.get_by_id(tenant.theme_id)
+        else:
+            theme = await theme_repository.get_default()
+        assert theme is not None
+        theme.font_family = font_family
+        await theme_repository.update(theme)
+
+        cookies = {}
+        cookies[settings.login_session_cookie_name] = login_session.token
+
+        response = await test_client_auth.get(f"{path_prefix}/login", cookies=cookies)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "<script>alert(1)</script>" not in response.text
+        html = BeautifulSoup(response.text, features="html.parser")
+        styles = html.find_all("style")
+        assert len(styles) == 1
+        assert expected in styles[0].text
 
 
 @pytest.mark.asyncio
@@ -1413,6 +1468,91 @@ class TestAuthGetConsent:
             session=main_session,
         )
         assert login_session.acr == ACR.LEVEL_ONE
+
+    async def _authorize_with_session(
+        self,
+        test_client_auth: httpx.AsyncClient,
+        client_id: str,
+        params: dict[str, str],
+    ) -> dict[str, str]:
+        session_token_token = session_token_tokens["regular"][0]
+        response = await test_client_auth.get(
+            "/authorize",
+            params={
+                **params,
+                "state": "STATE",
+                "response_type": "code",
+                "client_id": client_id,
+                "redirect_uri": "https://nantes.city/callback",
+                "scope": "openid",
+            },
+            cookies={settings.session_cookie_name: session_token_token},
+        )
+        assert response.status_code == status.HTTP_302_FOUND
+        assert response.headers["Location"].endswith("/consent")
+
+        return {
+            settings.login_session_cookie_name: response.cookies[
+                settings.login_session_cookie_name
+            ],
+            settings.session_cookie_name: session_token_token,
+        }
+
+    async def test_granted_without_prompt_from_authorize(
+        self, test_client_auth: httpx.AsyncClient, test_data: TestData
+    ):
+        client = test_data["clients"]["granted_default_tenant"]
+        cookies = await self._authorize_with_session(
+            test_client_auth, client.client_id, {}
+        )
+
+        response = await test_client_auth.get("/consent", cookies=cookies)
+
+        assert response.status_code == status.HTTP_302_FOUND
+        redirect_params = get_params_by_response_mode(
+            response.headers["Location"], DEFAULT_RESPONSE_MODE["code"]
+        )
+        assert "code" in redirect_params
+
+    async def test_granted_consent_prompt_from_authorize(
+        self, test_client_auth: httpx.AsyncClient, test_data: TestData
+    ):
+        client = test_data["clients"]["granted_default_tenant"]
+        cookies = await self._authorize_with_session(
+            test_client_auth, client.client_id, {"prompt": "consent"}
+        )
+
+        response = await test_client_auth.get("/consent", cookies=cookies)
+
+        assert response.status_code == status.HTTP_200_OK
+
+    async def test_none_prompt_without_grant_from_authorize(
+        self,
+        test_client_auth: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        client = test_data["clients"]["default_tenant"]
+        cookies = await self._authorize_with_session(
+            test_client_auth, client.client_id, {"prompt": "none"}
+        )
+
+        response = await test_client_auth.get("/consent", cookies=cookies)
+
+        assert response.status_code == status.HTTP_302_FOUND
+        redirect_uri = response.headers["Location"]
+        assert redirect_uri.startswith("https://nantes.city/callback")
+        redirect_params = get_params_by_response_mode(
+            redirect_uri, DEFAULT_RESPONSE_MODE["code"]
+        )
+        assert redirect_params["error"] == "consent_required"
+        assert redirect_params["state"] == "STATE"
+
+        login_session_repository = LoginSessionRepository(main_session)
+        used_login_session = await login_session_repository.get_by_token(
+            cookies[settings.login_session_cookie_name]
+        )
+        assert used_login_session is None
 
 
 @pytest.mark.asyncio

@@ -12,11 +12,12 @@ class OAuthAccountRepository(
     model = OAuthAccount
 
     async def get_by_provider_and_account_id(
-        self, provider_id: UUID4, account_id: str
+        self, provider_id: UUID4, account_id: str, tenant: UUID4
     ) -> OAuthAccount | None:
         statement = select(OAuthAccount).where(
             OAuthAccount.oauth_provider_id == provider_id,
             OAuthAccount.account_id == account_id,
+            OAuthAccount.tenant_id == tenant,
         )
         return await self.get_one_or_none(statement)
 

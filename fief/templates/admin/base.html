@@ -28,7 +28,7 @@
       {% endif %}
     {% endblock %}
   </head>
-  <body class="font-inter antialiased bg-gray-100 text-gray-600">
+  <body class="font-inter antialiased bg-gray-100 text-gray-600" hx-headers='{"X-CSRFToken": "{{ get_csrf_token() }}"}'>
     {% block hyperscripts %}{% endblock %}
     {% block body %}{% endblock %}
   </body>

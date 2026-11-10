@@ -1,6 +1,7 @@
 import dramatiq
 
 from fief.repositories import (
+    AdminSessionTokenRepository,
     AuthorizationCodeRepository,
     EmailVerificationRepository,
     LoginSessionRepository,
@@ -13,6 +14,7 @@ from fief.repositories.base import ExpiresAtRepositoryProtocol
 from fief.tasks.base import TaskBase
 
 repository_classes: list[type[ExpiresAtRepositoryProtocol]] = [
+    AdminSessionTokenRepository,
     AuthorizationCodeRepository,
     EmailVerificationRepository,
     LoginSessionRepository,

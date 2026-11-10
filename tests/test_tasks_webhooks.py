@@ -1,3 +1,4 @@
+import ipaddress
 from unittest.mock import MagicMock
 
 import httpx
@@ -7,6 +8,7 @@ from dramatiq import Message
 from dramatiq.middleware import CurrentMessage
 from pytest_mock import MockerFixture
 
+from fief.services.webhooks import target
 from fief.services.webhooks.delivery import WebhookDeliveryError
 from fief.services.webhooks.models import (
     ClientCreated,
@@ -16,6 +18,16 @@ from fief.services.webhooks.models import (
 )
 from fief.tasks.webhooks import DeliverWebhookTask, TriggerWebhooksTask
 from tests.data import TestData
+
+PUBLIC_IP = "93.184.216.34"
+
+
+@pytest.fixture(autouse=True)
+def resolve_host_mock(monkeypatch: pytest.MonkeyPatch):
+    async def _resolve_host(host: str):
+        return [ipaddress.ip_address(PUBLIC_IP)]
+
+    monkeypatch.setattr(target, "resolve_host", _resolve_host)
 
 
 @pytest.fixture
@@ -39,7 +51,9 @@ class TestTasksDeliverWebhook:
         get_current_message_mock.return_value = Message("queue", "actor", (), {}, {})
 
         webhook = test_data["webhooks"]["all"]
-        route_mock = respx_mock.post(webhook.url).mock(return_value=httpx.Response(200))
+        route_mock = respx_mock.post(f"https://{PUBLIC_IP}/webhook").mock(
+            return_value=httpx.Response(200)
+        )
 
         deliver_webhook = DeliverWebhookTask(main_session_manager)
 
@@ -61,7 +75,9 @@ class TestTasksDeliverWebhook:
         get_current_message_mock.return_value = Message("queue", "actor", (), {}, {})
 
         webhook = test_data["webhooks"]["all"]
-        respx_mock.post(webhook.url).mock(return_value=httpx.Response(400))
+        respx_mock.post(f"https://{PUBLIC_IP}/webhook").mock(
+            return_value=httpx.Response(400)
+        )
 
         deliver_webhook = DeliverWebhookTask(main_session_manager)
 

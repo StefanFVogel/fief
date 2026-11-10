@@ -1,5 +1,5 @@
 from collections.abc import AsyncGenerator, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import httpx
@@ -565,6 +565,37 @@ class TestUserVerifyEmail:
         response = await test_client_auth_access_token.post(
             f"{path_prefix}/api/email/verify",
             json={"code": "ABCDEF"},
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        json = response.json()
+        assert (
+            json["detail"] == APIErrorCode.USER_UPDATE_INVALID_EMAIL_VERIFICATION_CODE
+        )
+
+    @pytest.mark.access_token(user="regular", acr=ACR.LEVEL_ONE)
+    async def test_expired_code(
+        self,
+        test_data: TestData,
+        test_client_auth_access_token: httpx.AsyncClient,
+        main_session: AsyncSession,
+    ):
+        user = test_data["users"]["regular"]
+        code = email_verification_codes["regular_update_email"][0]
+        email_verification_repository = EmailVerificationRepository(main_session)
+        email_verification = await email_verification_repository.get_by_id(
+            test_data["email_verifications"]["regular_update_email"].id
+        )
+        assert email_verification is not None
+        email_verification.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await email_verification_repository.update(email_verification)
+        tenant = user.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
+
+        response = await test_client_auth_access_token.post(
+            f"{path_prefix}/api/email/verify",
+            json={"code": code},
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST

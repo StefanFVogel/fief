@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from httpx_oauth.exceptions import GetIdEmailError
 from httpx_oauth.oauth2 import GetAccessTokenError
 
@@ -33,6 +33,7 @@ from fief.schemas.oauth import OAuthError
 from fief.services.authentication_flow import AuthenticationFlow
 from fief.services.oauth_provider import get_oauth_provider_service
 from fief.services.registration_flow import RegistrationFlow
+from fief.settings import settings
 
 router = APIRouter(prefix="/oauth")
 
@@ -66,7 +67,29 @@ async def authorize(
         redirect_uri, state=state, scope=list(scopes)
     )
 
-    return RedirectResponse(authorize_url, status_code=status.HTTP_302_FOUND)
+    response = RedirectResponse(authorize_url, status_code=status.HTTP_302_FOUND)
+    response.set_cookie(
+        settings.oauth_session_cookie_name,
+        state,
+        max_age=settings.oauth_session_lifetime_seconds,
+        domain=settings.oauth_session_cookie_domain,
+        secure=settings.oauth_session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+
+    return response
+
+
+def delete_oauth_session_cookie(response: Response) -> Response:
+    response.delete_cookie(
+        settings.oauth_session_cookie_name,
+        domain=settings.oauth_session_cookie_domain,
+        secure=settings.oauth_session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
 
 
 @router.get("/callback", name="oauth:callback")
@@ -92,6 +115,9 @@ async def callback(
     tenant = oauth_session.tenant
     oauth_provider = oauth_session.oauth_provider
     oauth_provider_service = get_oauth_provider_service(oauth_provider)
+
+    # Consume the OAuth session so its state can't be replayed
+    await oauth_session_repository.delete(oauth_session)
 
     try:
         access_token_dict = await oauth_provider_service.get_access_token(
@@ -130,7 +156,7 @@ async def callback(
         ) from e
 
     oauth_account = await oauth_account_repository.get_by_provider_and_account_id(
-        oauth_provider.id, account_id
+        oauth_provider.id, account_id, tenant.id
     )
 
     # Existing account
@@ -167,7 +193,7 @@ async def callback(
             response = await authentication_flow.set_login_hint(
                 response, str(oauth_provider.id)
             )
-            return response
+            return delete_oauth_session_cookie(response)
 
         # Redirect to register
         response = RedirectResponse(
@@ -182,7 +208,7 @@ async def callback(
             oauth_account=oauth_account,
         )
 
-        return response
+        return delete_oauth_session_cookie(response)
 
     # New account to create
     oauth_account = OAuthAccount(
@@ -195,8 +221,6 @@ async def callback(
         tenant_id=tenant.id,
     )
     oauth_account = await oauth_account_repository.create(oauth_account)
-    oauth_session.oauth_account = oauth_account
-    await oauth_session_repository.update(oauth_session)
 
     response = RedirectResponse(
         tenant.url_path_for(request, "register:register"),
@@ -210,4 +234,4 @@ async def callback(
         oauth_account=oauth_account,
     )
 
-    return response
+    return delete_oauth_session_cookie(response)

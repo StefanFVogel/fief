@@ -216,6 +216,11 @@ class TestOAuthAuthorize:
         assert oauth_session.redirect_uri == redirect_uri
         assert redirect_uri.endswith("/oauth/callback")
 
+        assert response.cookies[settings.oauth_session_cookie_name] == state
+        set_cookie_header = response.headers["Set-Cookie"].lower()
+        assert "httponly" in set_cookie_header
+        assert "samesite=lax" in set_cookie_header
+
     async def test_valid_secondary_tenant(
         self,
         test_client_auth: httpx.AsyncClient,
@@ -295,8 +300,20 @@ class TestOAuthCallback:
         headers = response.headers
         assert headers["X-Fief-Error"] == error
 
-    async def test_access_token_error(
+    @pytest.mark.parametrize(
+        "oauth_session_cookie,state",
+        [
+            pytest.param(None, None, id="Missing OAuth session cookie"),
+            pytest.param(
+                "INVALID_OAUTH_SESSION", None, id="Invalid OAuth session cookie"
+            ),
+            pytest.param("STATE", "ÉTAT", id="Non-ASCII state"),
+        ],
+    )
+    async def test_invalid_oauth_session_cookie(
         self,
+        oauth_session_cookie: str | None,
+        state: str | None,
         mocker: MockerFixture,
         test_client_auth: httpx.AsyncClient,
         test_data: TestData,
@@ -305,6 +322,43 @@ class TestOAuthCallback:
         oauth_session = test_data["oauth_sessions"]["default_google"]
 
         cookies = {}
+        cookies[settings.login_session_cookie_name] = login_session.token
+        if oauth_session_cookie is not None:
+            cookies[settings.oauth_session_cookie_name] = oauth_session_cookie
+
+        get_oauth_provider_service_mock = mocker.patch(
+            "fief.apps.auth.routers.oauth.get_oauth_provider_service"
+        )
+
+        response = await test_client_auth.get(
+            "/oauth/callback",
+            params={
+                "code": "CODE",
+                "redirect_uri": oauth_session.redirect_uri,
+                "state": state if state is not None else oauth_session.token,
+            },
+            cookies=cookies,
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        headers = response.headers
+        assert headers["X-Fief-Error"] == "invalid_session"
+
+        get_oauth_provider_service_mock.assert_not_called()
+
+    async def test_access_token_error(
+        self,
+        mocker: MockerFixture,
+        test_client_auth: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        login_session = test_data["login_sessions"]["default"]
+        oauth_session = test_data["oauth_sessions"]["default_google"]
+
+        cookies = {}
+        cookies[settings.oauth_session_cookie_name] = oauth_session.token
         cookies[settings.login_session_cookie_name] = login_session.token
 
         oauth_provider_service_mock = MagicMock(spec=BaseOAuth2)
@@ -330,6 +384,9 @@ class TestOAuthCallback:
         headers = response.headers
         assert headers["X-Fief-Error"] == "access_token_error"
 
+        oauth_session_repository = OAuthSessionRepository(main_session)
+        assert await oauth_session_repository.get_by_token(oauth_session.token) is None
+
     async def test_get_id_email_error(
         self,
         mocker: MockerFixture,
@@ -340,6 +397,7 @@ class TestOAuthCallback:
         oauth_session = test_data["oauth_sessions"]["default_google"]
 
         cookies = {}
+        cookies[settings.oauth_session_cookie_name] = oauth_session.token
         cookies[settings.login_session_cookie_name] = login_session.token
 
         oauth_provider_service_mock = MagicMock(spec=BaseOAuth2)
@@ -383,6 +441,7 @@ class TestOAuthCallback:
         oauth_account = test_data["oauth_accounts"]["inactive_google"]
 
         cookies = {}
+        cookies[settings.oauth_session_cookie_name] = oauth_session.token
         cookies[settings.login_session_cookie_name] = login_session.token
 
         oauth_provider_service_mock = MagicMock(spec=BaseOAuth2)
@@ -434,6 +493,7 @@ class TestOAuthCallback:
         oauth_account = test_data["oauth_accounts"]["regular_google"]
 
         cookies = {}
+        cookies[settings.oauth_session_cookie_name] = oauth_session.token
         if has_login_session:
             cookies[settings.login_session_cookie_name] = login_session.token
 
@@ -493,6 +553,62 @@ class TestOAuthCallback:
         assert oauth_account.expires_at is not None
         assert updated_oauth_account.expires_at > oauth_account.expires_at
 
+        oauth_session_repository = OAuthSessionRepository(main_session)
+        assert await oauth_session_repository.get_by_token(oauth_session.token) is None
+
+        assert any(
+            header.startswith(f"{settings.oauth_session_cookie_name}=")
+            and "max-age=0" in header.lower()
+            for header in response.headers.get_list("Set-Cookie")
+        )
+
+    async def test_replay(
+        self,
+        mocker: MockerFixture,
+        test_client_auth: httpx.AsyncClient,
+        test_data: TestData,
+    ):
+        login_session = test_data["login_sessions"]["default"]
+        oauth_session = test_data["oauth_sessions"]["default_google"]
+        oauth_account = test_data["oauth_accounts"]["regular_google"]
+
+        cookies = {}
+        cookies[settings.login_session_cookie_name] = login_session.token
+        cookies[settings.oauth_session_cookie_name] = oauth_session.token
+
+        oauth_provider_service_mock = MagicMock(spec=BaseOAuth2)
+        oauth_provider_service_mock.get_access_token.side_effect = AsyncMock(
+            return_value={
+                "access_token": "ACCESS_TOKEN",
+                "expires_in": 3600,
+                "expires_at": int(datetime.now(UTC).timestamp() + 3600),
+                "refresh_token": "REFRESH_TOKEN",
+            }
+        )
+        oauth_provider_service_mock.get_id_email.side_effect = AsyncMock(
+            return_value=(oauth_account.account_id, oauth_account.account_email)
+        )
+        mocker.patch(
+            "fief.apps.auth.routers.oauth.get_oauth_provider_service"
+        ).return_value = oauth_provider_service_mock
+
+        params = {
+            "code": "CODE",
+            "redirect_uri": oauth_session.redirect_uri,
+            "state": oauth_session.token,
+        }
+
+        response = await test_client_auth.get(
+            "/oauth/callback", params=params, cookies=cookies
+        )
+        assert response.status_code == status.HTTP_302_FOUND
+
+        replay_response = await test_client_auth.get(
+            "/oauth/callback", params=params, cookies=cookies
+        )
+        assert replay_response.status_code == status.HTTP_400_BAD_REQUEST
+        assert replay_response.headers["X-Fief-Error"] == "invalid_session"
+
     async def test_dangling_account(
         self,
         mocker: MockerFixture,
@@ -509,6 +625,7 @@ class TestOAuthCallback:
         oauth_account = test_data["oauth_accounts"]["new_user_google"]
 
         cookies = {}
+        cookies[settings.oauth_session_cookie_name] = oauth_session.token
         cookies[settings.login_session_cookie_name] = login_session.token
 
         oauth_provider_service_mock = MagicMock(spec=BaseOAuth2)
@@ -545,7 +662,7 @@ class TestOAuthCallback:
         oauth_account_repository = OAuthAccountRepository(main_session)
         updated_oauth_account = (
             await oauth_account_repository.get_by_provider_and_account_id(
-                oauth_session.oauth_provider_id, oauth_account.account_id
+                oauth_session.oauth_provider_id, oauth_account.account_id, tenant.id
             )
         )
         assert updated_oauth_account is not None
@@ -581,6 +698,7 @@ class TestOAuthCallback:
         oauth_session = test_data["oauth_sessions"]["default_google"]
 
         cookies = {}
+        cookies[settings.oauth_session_cookie_name] = oauth_session.token
         cookies[settings.login_session_cookie_name] = login_session.token
 
         oauth_provider_service_mock = MagicMock(spec=BaseOAuth2)
@@ -616,7 +734,7 @@ class TestOAuthCallback:
 
         oauth_account_repository = OAuthAccountRepository(main_session)
         oauth_account = await oauth_account_repository.get_by_provider_and_account_id(
-            oauth_session.oauth_provider_id, "NEW_ACCOUNT"
+            oauth_session.oauth_provider_id, "NEW_ACCOUNT", tenant.id
         )
         assert oauth_account is not None
         assert oauth_account.access_token == "ACCESS_TOKEN"
@@ -635,6 +753,15 @@ class TestOAuthCallback:
         assert registration_session.oauth_account_id == oauth_account.id
         assert registration_session.email == oauth_account.account_email
 
+        oauth_session_repository = OAuthSessionRepository(main_session)
+        assert await oauth_session_repository.get_by_token(oauth_session.token) is None
+
+        assert any(
+            header.startswith(f"{settings.oauth_session_cookie_name}=")
+            and "max-age=0" in header.lower()
+            for header in response.headers.get_list("Set-Cookie")
+        )
+
     async def test_secondary_tenant_invalid_login_session(
         self, test_client_auth: httpx.AsyncClient, test_data: TestData
     ):
@@ -642,6 +769,7 @@ class TestOAuthCallback:
         oauth_session = test_data["oauth_sessions"]["secondary_google"]
 
         cookies = {}
+        cookies[settings.oauth_session_cookie_name] = oauth_session.token
         cookies[settings.login_session_cookie_name] = login_session.token
 
         response = await test_client_auth.get(
@@ -670,6 +798,7 @@ class TestOAuthCallback:
         oauth_session = test_data["oauth_sessions"]["secondary_google"]
 
         cookies = {}
+        cookies[settings.oauth_session_cookie_name] = oauth_session.token
         cookies[settings.login_session_cookie_name] = login_session.token
 
         oauth_provider_service_mock = MagicMock(spec=BaseOAuth2)
@@ -702,3 +831,82 @@ class TestOAuthCallback:
 
         redirect_uri = response.headers["Location"]
         assert redirect_uri.endswith(f"{path_prefix}/register")
+
+    async def test_secondary_tenant_existing_oauth_account_other_tenant(
+        self,
+        mocker: MockerFixture,
+        test_client_auth: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        login_session = test_data["login_sessions"]["secondary"]
+        client = login_session.client
+        tenant = client.tenant
+        path_prefix = tenant.slug if not tenant.default else ""
+
+        oauth_session = test_data["oauth_sessions"]["secondary_google"]
+        oauth_account = test_data["oauth_accounts"]["regular_google"]
+
+        cookies = {}
+        cookies[settings.oauth_session_cookie_name] = oauth_session.token
+        cookies[settings.login_session_cookie_name] = login_session.token
+
+        oauth_provider_service_mock = MagicMock(spec=BaseOAuth2)
+        oauth_provider_service_mock.get_access_token.side_effect = AsyncMock(
+            return_value={
+                "access_token": "ACCESS_TOKEN",
+                "expires_in": 3600,
+                "expires_at": int(datetime.now(UTC).timestamp() + 3600),
+                "refresh_token": "REFRESH_TOKEN",
+            }
+        )
+        oauth_provider_service_mock.get_id_email.side_effect = AsyncMock(
+            return_value=(oauth_account.account_id, oauth_account.account_email)
+        )
+        mocker.patch(
+            "fief.apps.auth.routers.oauth.get_oauth_provider_service"
+        ).return_value = oauth_provider_service_mock
+
+        response = await test_client_auth.get(
+            "/oauth/callback",
+            params={
+                "code": "CODE",
+                "redirect_uri": oauth_session.redirect_uri,
+                "state": oauth_session.token,
+            },
+            cookies=cookies,
+        )
+
+        assert response.status_code == status.HTTP_302_FOUND
+
+        redirect_uri = response.headers["Location"]
+        assert redirect_uri.endswith(f"{path_prefix}/register")
+
+        assert settings.session_cookie_name not in response.cookies
+
+        oauth_account_repository = OAuthAccountRepository(main_session)
+        other_tenant_oauth_account = await oauth_account_repository.get_by_id(
+            oauth_account.id
+        )
+        assert other_tenant_oauth_account is not None
+        assert other_tenant_oauth_account.access_token == oauth_account.access_token
+
+        new_oauth_account = (
+            await oauth_account_repository.get_by_provider_and_account_id(
+                oauth_session.oauth_provider_id, oauth_account.account_id, tenant.id
+            )
+        )
+        assert new_oauth_account is not None
+        assert new_oauth_account.id != oauth_account.id
+        assert new_oauth_account.user is None
+
+        registration_session_cookie = response.cookies[
+            settings.registration_session_cookie_name
+        ]
+        registration_session_repository = RegistrationSessionRepository(main_session)
+        registration_session = await registration_session_repository.get_by_token(
+            registration_session_cookie
+        )
+        assert registration_session is not None
+        assert registration_session.tenant_id == tenant.id
+        assert registration_session.oauth_account_id == new_oauth_account.id

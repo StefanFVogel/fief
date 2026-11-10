@@ -18,7 +18,7 @@ class OAuthAccount(UUIDModel, CreatedUpdatedAt, Base):
     __tablename__ = "oauth_accounts"
     __table_args__ = (
         UniqueConstraint("oauth_provider_id", "user_id"),
-        UniqueConstraint("oauth_provider_id", "account_id"),
+        UniqueConstraint("oauth_provider_id", "account_id", "tenant_id"),
     )
 
     access_token: Mapped[str] = mapped_column(

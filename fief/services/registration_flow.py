@@ -72,6 +72,7 @@ class RegistrationFlow:
             registration_session.token,
             domain=settings.registration_session_cookie_domain,
             secure=settings.registration_session_cookie_secure,
+            httponly=True,
         )
 
         return response

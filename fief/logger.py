@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import sys
 import uuid
 from datetime import UTC
@@ -17,6 +18,10 @@ if TYPE_CHECKING:
     from loguru import Logger, Message, Record
 
 LOG_LEVEL = settings.log_level
+
+ACCESS_LOG_SENSITIVE_QUERY_REGEX = re.compile(
+    r"([?&](?:token|code|state|code_verifier|id_token_hint)=)[^&#]*"
+)
 
 
 def stdout_format(record: "Record") -> str:
@@ -123,6 +128,16 @@ class InterceptHandler(logging.Handler):
         )
 
 
+def redact_access_log_query(record: logging.LogRecord) -> bool:
+    """Redact sensitive query parameters from the path of uvicorn access logs."""
+    if isinstance(record.args, tuple) and len(record.args) == 5:
+        client_addr, method, full_path, http_version, status_code = record.args
+        if isinstance(full_path, str):
+            full_path = ACCESS_LOG_SENSITIVE_QUERY_REGEX.sub(r"\1**********", full_path)
+            record.args = (client_addr, method, full_path, http_version, status_code)
+    return True
+
+
 def init_logger():
     from fief.tasks import write_audit_log
 
@@ -148,6 +163,7 @@ def init_logger():
         uvicorn_logger = logging.getLogger(uvicorn_logger_name)
         uvicorn_logger.setLevel(LOG_LEVEL)
         uvicorn_logger.handlers = [InterceptHandler()]
+        uvicorn_logger.addFilter(redact_access_log_query)
 
 
 __all__ = ["init_logger", "logger"]
