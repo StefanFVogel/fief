@@ -1,3 +1,7 @@
+import pytest
+from sqlalchemy import select, text
+
+from fief.db import AsyncSession
 from fief.models import EmailDomain, Tenant
 from fief.settings import settings
 from tests.data import TestData
@@ -57,3 +61,20 @@ class TestGetEmailSender:
         )
 
         assert tenant.get_email_sender() == ("anne@bretagne.duchy", "Anne")
+
+
+@pytest.mark.asyncio
+async def test_sign_jwk_encrypted_at_rest(
+    main_session: AsyncSession, test_data: TestData
+):
+    tenant = test_data["tenants"]["default"]
+    result = await main_session.execute(
+        select(text("sign_jwk"))
+        .select_from(Tenant.__table__)
+        .where(Tenant.id == tenant.id)
+    )
+    stored_value = result.scalar_one()
+
+    assert tenant.sign_jwk not in stored_value
+    assert '"d"' not in stored_value
+    assert tenant.get_sign_jwk().has_private
