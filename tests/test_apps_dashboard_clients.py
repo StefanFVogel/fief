@@ -216,8 +216,17 @@ class TestCreateClient:
 
     @pytest.mark.authenticated_admin(mode="session")
     @pytest.mark.htmx(target="modal")
+    @pytest.mark.parametrize(
+        "redirect_uri",
+        [
+            "http://nantes.city/callback",
+            "http://localhost.attacker.example/callback",
+            "http://192.168.0.42/callback",
+        ],
+    )
     async def test_redirect_uris_not_https(
         self,
+        redirect_uri: str,
         test_client_dashboard: httpx.AsyncClient,
         test_data: TestData,
         csrf_token: str,
@@ -229,7 +238,7 @@ class TestCreateClient:
                 "name": "New client",
                 "first_party": True,
                 "client_type": "confidential",
-                "redirect_uris-0": "http://nantes.city/callback",
+                "redirect_uris-0": redirect_uri,
                 "tenant": str(tenant.id),
                 "csrf_token": csrf_token,
             },
