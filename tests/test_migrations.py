@@ -1,5 +1,6 @@
 import json
 import uuid
+from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -13,12 +14,14 @@ from fief.db.types import get_driver
 from fief.models.base import TABLE_PREFIX
 from fief.models.generics import GUID
 from fief.paths import ALEMBIC_CONFIG_FILE
+from fief.services import email_template
 from fief.settings import settings
 from tests.types import GetTestDatabase
 
 PREVIOUS_REVISION = "f0462e660029"
 ENCRYPT_SECRETS_REVISION = "c3d1e9a4b7f2"
 OAUTH_ACCOUNT_TENANT_REVISION = "4eef465ce7bd"
+REMOVE_GOOGLE_FONTS_REVISION = "0ca0ffa65291"
 
 SIGN_JWK = jwk.JWK.generate(kty="RSA", size=1024).export()
 CLIENT_SECRET = "PLAINTEXT_CLIENT_SECRET"
@@ -69,6 +72,13 @@ oauth_accounts_table = sa.table(
     sa.column("account_id", sa.String),
     sa.column("oauth_provider_id", GUID),
     sa.column("tenant_id", GUID),
+)
+email_templates_table = sa.table(
+    f"{TABLE_PREFIX}email_templates",
+    sa.column("id", GUID),
+    sa.column("type", sa.String),
+    sa.column("subject", sa.Text),
+    sa.column("content", sa.Text),
 )
 
 
@@ -236,3 +246,55 @@ async def test_oauth_account_tenant_unique_constraint_migration(
                     await connection.run_sync(_insert_in_other_tenant)
         finally:
             await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_remove_google_fonts_from_base_email_template_migration(
+    get_test_database: GetTestDatabase,
+):
+    async with get_test_database(name="fief-test-migration-google-fonts") as (
+        (url, connect_args),
+        database_type,
+    ):
+        url = url.set(drivername=get_driver(database_type, asyncio=True))
+        engine = create_engine((url, connect_args))
+
+        base_content = (
+            Path(email_template.__file__).parent / "templates" / "base.html"
+        ).read_text()
+        google_fonts_import = '@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");'
+        base_marker = "/* Base ------------------------------ */\n\n"
+        stored_base_content = base_content.replace(
+            base_marker, f"{base_marker}    {google_fonts_import}\n\n"
+        )
+        welcome_content = f"<style>{google_fonts_import}</style>"
+
+        def _upgrade(connection: sa.Connection) -> dict[str, str]:
+            _run_alembic(connection, command.upgrade, OAUTH_ACCOUNT_TENANT_REVISION)
+            for type, content in (
+                ("BASE", stored_base_content),
+                ("WELCOME", welcome_content),
+            ):
+                connection.execute(
+                    email_templates_table.insert().values(
+                        id=uuid.uuid4(), type=type, subject="", content=content
+                    )
+                )
+            _run_alembic(connection, command.upgrade, REMOVE_GOOGLE_FONTS_REVISION)
+            return dict(
+                connection.execute(
+                    sa.select(
+                        email_templates_table.c.type, email_templates_table.c.content
+                    )
+                ).all()
+            )
+
+        try:
+            async with engine.begin() as connection:
+                contents = await connection.run_sync(_upgrade)
+        finally:
+            await engine.dispose()
+
+        assert google_fonts_import in stored_base_content
+        assert contents["BASE"] == base_content
+        assert contents["WELCOME"] == welcome_content
