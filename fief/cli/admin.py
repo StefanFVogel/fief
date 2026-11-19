@@ -18,6 +18,7 @@ from fief.services.initializer import (
     Initializer,
     UserDoesNotExist,
 )
+from fief.services.trusted_hosts import TrustedHosts
 from fief.services.user_manager import InvalidPasswordError, UserAlreadyExistsError
 from fief.services.user_roles import UserRoleAlreadyExists
 from fief.settings import settings
@@ -191,6 +192,20 @@ def add_commands(app: typer.Typer) -> typer.Typer:
         ),
     ):
         """Run the Fief server."""
+        forwarded_allow_ips = os.environ.get("FORWARDED_ALLOW_IPS", "127.0.0.1")
+        if (
+            settings.rate_limit_enabled
+            and TrustedHosts(forwarded_allow_ips).always_trust
+        ):
+            typer.secho(
+                "WARNING: FORWARDED_ALLOW_IPS is '*', so the client address is taken "
+                "from the leftmost X-Forwarded-For entry. Behind a proxy appending to "
+                "this header, clients can choose their own address and bypass the "
+                "rate limiting per IP. Set FORWARDED_ALLOW_IPS to the addresses or "
+                "networks of your reverse proxies instead, e.g. 10.0.0.0/8.",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
 
         async def _pre_run_server():
             if migrate:

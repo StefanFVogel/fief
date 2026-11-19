@@ -59,6 +59,42 @@ def test_run_server_forwards_to_uvicorn():
     assert uvicorn_run.call_args.kwargs["port"] == settings.port
 
 
+@pytest.mark.parametrize(
+    "forwarded_allow_ips,rate_limit_enabled,warning",
+    [
+        ("*", True, True),
+        ("*", False, False),
+        ("10.244.0.0/16", True, False),
+        (None, True, False),
+    ],
+)
+def test_run_server_warns_when_all_proxies_trusted(
+    monkeypatch: pytest.MonkeyPatch,
+    forwarded_allow_ips: str | None,
+    rate_limit_enabled: bool,
+    warning: bool,
+):
+    if forwarded_allow_ips is None:
+        monkeypatch.delenv("FORWARDED_ALLOW_IPS", raising=False)
+    else:
+        monkeypatch.setenv("FORWARDED_ALLOW_IPS", forwarded_allow_ips)
+    monkeypatch.setattr(settings, "rate_limit_enabled", rate_limit_enabled)
+
+    with patch("uvicorn.main.run"):
+        result = CliRunner().invoke(
+            app,
+            [
+                "run-server",
+                "--no-migrate",
+                "--no-create-main-user",
+                "--no-create-main-admin-api-key",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert ("FORWARDED_ALLOW_IPS" in result.output) is warning
+
+
 def test_run_worker_forwards_to_dramatiq():
     with patch("fief.cli.admin.dramatiq_cli.main") as dramatiq_main:
         result = CliRunner().invoke(app, ["run-worker", "-p", "1", "-t", "1"])

@@ -123,6 +123,8 @@ class Settings(BaseSettings):
     rate_limit_max_wait_seconds: int = 900
     rate_limit_counter_lifetime_seconds: int = 86400
 
+    x_forwarded_host_enabled: bool = False
+
     oauth_session_cookie_name: str = "fief_oauth_session"
     oauth_session_cookie_domain: str = ""
     oauth_session_cookie_secure: bool = True
