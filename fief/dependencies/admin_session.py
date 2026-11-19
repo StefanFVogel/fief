@@ -15,6 +15,12 @@ cookie_scheme = APIKeyCookie(
 )
 
 
+def get_admin_login_url(request: Request) -> str:
+    return str(
+        request.url_for("dashboard.auth:login").replace(netloc=settings.fief_domain)
+    )
+
+
 async def get_optional_admin_session_token(
     token: str | None = Depends(cookie_scheme),
     repository: AdminSessionTokenRepository = Depends(
@@ -50,7 +56,7 @@ async def get_admin_session_token(
     if admin_session_token is None:
         raise HTTPException(
             status_code=status.HTTP_307_TEMPORARY_REDIRECT,
-            headers={"Location": str(request.url_for("dashboard.auth:login"))},
+            headers={"Location": get_admin_login_url(request)},
         )
 
     admin_session_token.last_activity_at = datetime.now(UTC)

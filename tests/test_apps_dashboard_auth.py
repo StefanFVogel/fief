@@ -5,9 +5,12 @@ import httpx
 import pytest
 from fastapi import status
 from fief_client import FiefAccessTokenMissingPermission
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from fief.apps import dashboard_app
 from fief.crypto.token import get_token_hash
 from fief.db import AsyncSession
+from fief.middlewares.x_forwarded_host import XForwardedHostMiddleware
 from fief.models import UserPermission
 from fief.repositories import AdminSessionTokenRepository, UserRepository
 from fief.services.admin import ADMIN_PERMISSION_CODENAME
@@ -43,7 +46,7 @@ class TestAuthLogin:
         assert "samesite=lax" in set_cookie_header
 
         fief_client_mock.auth_url.assert_called_once_with(
-            redirect_uri="http://api.fief.dev/auth/callback",
+            redirect_uri=f"http://{settings.fief_domain}/auth/callback",
             state=state,
             scope=["openid"],
             extras_params={"screen": "login"},
@@ -361,7 +364,7 @@ class TestAuthLogout:
         location = response.headers["Location"]
         assert (
             location
-            == f"//{settings.fief_domain}/logout?redirect_uri=http://api.fief.dev/admin/"
+            == f"//{settings.fief_domain}/logout?redirect_uri=http://{settings.fief_domain}/admin/"
         )
 
         assert "Set-Cookie" in response.headers
@@ -419,3 +422,146 @@ class TestAdminSessionInactiveUser:
         response = await test_client_dashboard.get("/users/")
 
         dashboard_unauthorized_assertions(response)
+
+
+FOREIGN_HOST = "evil.example"
+OWN_DOMAIN = "auth.example.com"
+PROXY_ADDRESS = "10.244.0.5"
+
+
+@pytest.fixture
+def own_domain(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "fief_domain", OWN_DOMAIN)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("own_domain")
+class TestForeignHost:
+    @pytest.mark.parametrize("path", ["/", "/auth/profile", "/auth/logout"])
+    async def test_unauthorized_redirect(
+        self, path: str, test_client_dashboard: httpx.AsyncClient
+    ):
+        response = await test_client_dashboard.get(path, headers={"Host": FOREIGN_HOST})
+
+        assert response.status_code == status.HTTP_307_TEMPORARY_REDIRECT
+        assert response.headers["Location"] == f"http://{OWN_DOMAIN}/auth/login"
+
+    @pytest.mark.parametrize("path", ["/", "/auth/logout"])
+    async def test_unauthorized_redirect_x_forwarded_host(
+        self,
+        path: str,
+        test_client_dashboard: httpx.AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(settings, "x_forwarded_host_enabled", True)
+        app = ProxyHeadersMiddleware(
+            XForwardedHostMiddleware(dashboard_app, trusted_hosts="*"),
+            trusted_hosts="*",
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, client=(PROXY_ADDRESS, 123)),
+            base_url=f"http://{OWN_DOMAIN}",
+        ) as client:
+            response = await client.get(
+                path,
+                headers={
+                    "X-Forwarded-Host": FOREIGN_HOST,
+                    "X-Forwarded-Proto": "https",
+                },
+            )
+
+        assert response.status_code == status.HTTP_307_TEMPORARY_REDIRECT
+        assert response.headers["Location"] == f"https://{OWN_DOMAIN}/auth/login"
+
+    async def test_inactive_admin_redirect(
+        self,
+        test_client_dashboard: httpx.AsyncClient,
+        test_data: TestData,
+        main_session: AsyncSession,
+    ):
+        user = await UserRepository(main_session).get_by_id(
+            test_data["users"]["inactive"].id
+        )
+        assert user is not None
+        main_session.add(
+            UserPermission(
+                user_id=user.id,
+                permission_id=test_data["permissions"][ADMIN_PERMISSION_CODENAME].id,
+            )
+        )
+        _, token = await create_admin_session_token(user, main_session)
+        test_client_dashboard.cookies.set(
+            settings.fief_admin_session_cookie_name, token
+        )
+
+        response = await test_client_dashboard.get(
+            "/users/", headers={"Host": FOREIGN_HOST}
+        )
+
+        assert response.status_code == status.HTTP_307_TEMPORARY_REDIRECT
+        assert response.headers["Location"] == f"http://{OWN_DOMAIN}/auth/login"
+
+    async def test_login_redirect_uri(
+        self, test_client_dashboard: httpx.AsyncClient, fief_client_mock: MagicMock
+    ):
+        fief_client_mock.auth_url.side_effect = AsyncMock(
+            return_value=f"http://{OWN_DOMAIN}/authorize"
+        )
+
+        response = await test_client_dashboard.get(
+            "/auth/login", headers={"Host": FOREIGN_HOST}
+        )
+
+        assert response.status_code == status.HTTP_302_FOUND
+        assert (
+            fief_client_mock.auth_url.call_args.kwargs["redirect_uri"]
+            == f"http://{OWN_DOMAIN}/auth/callback"
+        )
+
+    async def test_callback_redirect_uri(
+        self, test_client_dashboard: httpx.AsyncClient, fief_client_mock: MagicMock
+    ):
+        fief_client_mock.auth_callback.side_effect = AsyncMock(
+            return_value=(
+                {"access_token": "ACCESS_TOKEN", "id_token": "ID_TOKEN"},
+                {"email": "anne@bretagne.duchy"},
+            )
+        )
+        test_client_dashboard.cookies.set(
+            settings.fief_admin_state_cookie_name, "STATE"
+        )
+
+        response = await test_client_dashboard.get(
+            "/auth/callback",
+            params={"code": "CODE", "state": "STATE"},
+            headers={"Host": FOREIGN_HOST},
+        )
+
+        assert response.status_code == status.HTTP_302_FOUND
+        fief_client_mock.auth_callback.assert_called_once_with(
+            "CODE", f"http://{OWN_DOMAIN}/auth/callback"
+        )
+
+    @pytest.mark.parametrize("scheme", ["http", "https"])
+    @pytest.mark.authenticated_admin(mode="session")
+    async def test_logout_completes(
+        self,
+        scheme: str,
+        test_client_dashboard: httpx.AsyncClient,
+        test_client_auth: httpx.AsyncClient,
+    ):
+        response = await test_client_dashboard.get(
+            f"{scheme}://{FOREIGN_HOST}/auth/logout"
+        )
+
+        assert response.status_code == status.HTTP_302_FOUND
+        location = response.headers["Location"]
+        assert (
+            location
+            == f"//{OWN_DOMAIN}/logout?redirect_uri={scheme}://{OWN_DOMAIN}/admin/"
+        )
+
+        response = await test_client_auth.get(f"{scheme}:{location}")
+
+        assert response.status_code == status.HTTP_302_FOUND
+        assert response.headers["Location"] == f"{scheme}://{OWN_DOMAIN}/admin/"
