@@ -98,8 +98,20 @@ class RateLimiter:
         await self.redis.delete(*(key.key for key in keys))
 
 
-def _get_client_ip(request: Request) -> str:
-    return request.client.host if request.client is not None else ""
+def _get_client_ip(request: Request) -> str | None:
+    """
+    Return the client address the rate limiter counts on.
+
+    uvicorn's `ProxyHeadersMiddleware` sets `request.client.host`
+    from `X-Forwarded-For` when the connection comes from `FORWARDED_ALLOW_IPS`,
+    taking the rightmost address that is not a trusted proxy.
+    With `FORWARDED_ALLOW_IPS=*`, it takes the leftmost one,
+    which the client chooses itself behind proxies appending to the header.
+
+    Returns `None` without a client address, so that such requests
+    don't share a single counter.
+    """
+    return request.client.host if request.client is not None else None
 
 
 def get_login_rate_limit_keys(
@@ -107,12 +119,17 @@ def get_login_rate_limit_keys(
 ) -> list[RateLimitKey]:
     email = email.strip().lower()
     ip = _get_client_ip(request)
+    account_key = RateLimitKey(
+        f"fief:rate_limit:login:account:{tenant}:{email}", capped=True
+    )
+    if ip is None:
+        return [account_key]
     return [
         RateLimitKey(f"fief:rate_limit:login:ip:{ip}", capped=True),
         RateLimitKey(
             f"fief:rate_limit:login:account_ip:{tenant}:{email}:{ip}", capped=False
         ),
-        RateLimitKey(f"fief:rate_limit:login:account:{tenant}:{email}", capped=True),
+        account_key,
     ]
 
 
@@ -120,6 +137,10 @@ def get_verify_code_rate_limit_keys(
     request: Request, user: UUID4
 ) -> list[RateLimitKey]:
     ip = _get_client_ip(request)
+    if ip is None:
+        return [
+            RateLimitKey(f"fief:rate_limit:verify_code:account:{user}", capped=False)
+        ]
     return [
         RateLimitKey(f"fief:rate_limit:verify_code:ip:{ip}", capped=True),
         RateLimitKey(
@@ -133,7 +154,9 @@ def get_email_rate_limit_keys(
 ) -> list[RateLimitKey]:
     email = email.strip().lower()
     ip = _get_client_ip(request)
-    return [
-        RateLimitKey(f"fief:rate_limit:{action}:ip:{ip}", capped=True),
-        RateLimitKey(f"fief:rate_limit:{action}:email:{tenant}:{email}", capped=True),
-    ]
+    email_key = RateLimitKey(
+        f"fief:rate_limit:{action}:email:{tenant}:{email}", capped=True
+    )
+    if ip is None:
+        return [email_key]
+    return [RateLimitKey(f"fief:rate_limit:{action}:ip:{ip}", capped=True), email_key]
