@@ -18,6 +18,12 @@ from fief.settings import settings
 router = APIRouter()
 
 
+def _get_callback_url(request: Request) -> str:
+    return str(
+        request.url_for("dashboard.auth:callback").replace(netloc=settings.fief_domain)
+    )
+
+
 @router.get("/login", name="dashboard.auth:login")
 async def login(
     request: Request,
@@ -26,7 +32,7 @@ async def login(
 ):
     state = secrets.token_urlsafe()
     url = await fief.auth_url(
-        redirect_uri=str(request.url_for("dashboard.auth:callback")),
+        redirect_uri=_get_callback_url(request),
         state=state,
         scope=["openid"],
         extras_params={"screen": screen},
@@ -65,9 +71,7 @@ async def callback(
     ):
         raise HTTPException(status.HTTP_400_BAD_REQUEST)
 
-    tokens, userinfo = await fief.auth_callback(
-        code, str(request.url_for("dashboard.auth:callback"))
-    )
+    tokens, userinfo = await fief.auth_callback(code, _get_callback_url(request))
 
     try:
         await fief.validate_access_token(
@@ -125,8 +129,9 @@ async def logout(
 ):
     await repository.delete(session_token)
 
+    base_url = request.base_url.replace(netloc=settings.fief_domain)
     response = RedirectResponse(
-        url=f"//{settings.fief_domain}/logout?redirect_uri={request.base_url}admin/",
+        url=f"//{settings.fief_domain}/logout?redirect_uri={base_url}admin/",
         status_code=status.HTTP_302_FOUND,
     )
     response.delete_cookie(

@@ -1,7 +1,10 @@
 from fastapi import Depends, HTTPException, Request, status
 
 from fief.dependencies.admin_api_key import get_optional_admin_api_key
-from fief.dependencies.admin_session import get_admin_session_token
+from fief.dependencies.admin_session import (
+    get_admin_login_url,
+    get_admin_session_token,
+)
 from fief.dependencies.permission import (
     UserPermissionsGetter,
     get_user_permissions_getter,
@@ -21,7 +24,7 @@ async def is_authenticated_admin_session(
     if user is None or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_307_TEMPORARY_REDIRECT,
-            headers={"Location": str(request.url_for("dashboard.auth:login"))},
+            headers={"Location": get_admin_login_url(request)},
         )
 
     permissions = await get_user_permissions(user)
