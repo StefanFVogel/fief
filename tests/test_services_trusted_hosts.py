@@ -26,7 +26,13 @@ def test_contains(trusted_hosts: str | list[str], host: str | None, expected: bo
 
 @pytest.mark.parametrize(
     "trusted_hosts,expected",
-    [("*", True), (" * ", True), ("127.0.0.1", False), ("127.0.0.1,*", False)],
+    [
+        ("*", True),
+        (["*"], True),
+        (" * ", False),
+        ("127.0.0.1", False),
+        ("127.0.0.1,*", False),
+    ],
 )
 def test_always_trust(trusted_hosts: str, expected: bool):
     assert TrustedHosts(trusted_hosts).always_trust is expected

@@ -249,10 +249,11 @@ class TestClientAddressBehindProxy:
         client_host: str,
         email: str,
         x_forwarded_for: str | None = None,
+        trusted_hosts: str = PROXY_NETWORK,
     ) -> None:
         app = ProxyHeadersMiddleware(
-            XForwardedHostMiddleware(auth_app, trusted_hosts=PROXY_NETWORK),
-            trusted_hosts=PROXY_NETWORK,
+            XForwardedHostMiddleware(auth_app, trusted_hosts=trusted_hosts),
+            trusted_hosts=trusted_hosts,
         )
         headers = {}
         if x_forwarded_for is not None:
@@ -298,6 +299,24 @@ class TestClientAddressBehindProxy:
 
         assert await self.get_ip_keys(rate_limiter_redis) == [
             "fief:rate_limit:forgot_password:ip:198.51.100.9"
+        ]
+
+    async def test_all_trusted_takes_client_chosen_address(
+        self,
+        csrf_token: str,
+        rate_limiter_redis: FakeAsyncRedis,
+        test_client_auth: httpx.AsyncClient,
+    ):
+        await self.forgot(
+            csrf_token,
+            PROXY_ADDRESS,
+            "anne@bretagne.duchy",
+            "203.0.113.7, 198.51.100.9",
+            trusted_hosts="*",
+        )
+
+        assert await self.get_ip_keys(rate_limiter_redis) == [
+            "fief:rate_limit:forgot_password:ip:203.0.113.7"
         ]
 
     async def test_other_client_not_blocked(

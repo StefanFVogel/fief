@@ -85,6 +85,25 @@ class TestXForwardedHostMiddleware:
         assert await get_host(trusted_hosts, client_host) == "auth.example.com"
 
 
+async def get_login_redirect(
+    trusted_hosts: str, headers: dict[str, str], tenant_params: TenantParams
+) -> httpx.Response:
+    app = ProxyHeadersMiddleware(
+        XForwardedHostMiddleware(auth_app, trusted_hosts=trusted_hosts),
+        trusted_hosts=trusted_hosts,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, client=(PROXY_ADDRESS, 123)),
+        base_url="http://auth.example.com",
+    ) as client:
+        response = await client.get(
+            f"{tenant_params.path_prefix}/",
+            headers={**headers, "X-Forwarded-Host": "evil.example"},
+        )
+    assert response.status_code == status.HTTP_307_TEMPORARY_REDIRECT
+    return response
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "trusted_hosts,headers",
@@ -100,19 +119,30 @@ async def test_foreign_host_not_in_links(
     tenant_params: TenantParams,
     test_client_auth: httpx.AsyncClient,
 ):
-    app = ProxyHeadersMiddleware(
-        XForwardedHostMiddleware(auth_app, trusted_hosts=trusted_hosts),
-        trusted_hosts=trusted_hosts,
-    )
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app, client=(PROXY_ADDRESS, 123)),
-        base_url="http://auth.example.com",
-    ) as client:
-        response = await client.get(
-            f"{tenant_params.path_prefix}/",
-            headers={**headers, "X-Forwarded-Host": "evil.example"},
-        )
+    response = await get_login_redirect(trusted_hosts, headers, tenant_params)
 
-    assert response.status_code == status.HTTP_307_TEMPORARY_REDIRECT
     assert response.headers["location"].startswith("http://auth.example.com/")
     assert "evil.example" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "headers,host",
+    [
+        ({"X-Forwarded-For": "203.0.113.7, 198.51.100.9"}, "auth.example.com"),
+        ({"X-Forwarded-For": "10.244.3.3"}, "evil.example"),
+        ({}, "evil.example"),
+    ],
+)
+async def test_enabled_trusts_client_address_resolved_by_uvicorn(
+    headers: dict[str, str],
+    host: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tenant_params: TenantParams,
+    test_client_auth: httpx.AsyncClient,
+):
+    monkeypatch.setattr(settings, "x_forwarded_host_enabled", True)
+
+    response = await get_login_redirect(PROXY_NETWORK, headers, tenant_params)
+
+    assert response.headers["location"].startswith(f"http://{host}/")

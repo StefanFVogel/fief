@@ -129,9 +129,9 @@ uvicorn takes the rightmost `X-Forwarded-For` entry that is not a trusted proxy,
 FORWARDED_ALLOW_IPS=10.244.0.0/16  # Pod network of the cluster
 ```
 
-This value depends on the proxies' network; update it when the network changes.
+This value depends on the proxies' network; update it when the network changes. Every hop appending to `X-Forwarded-For` must be listed, and the address appended by the outermost one must be the real client's: if a load balancer translates client addresses before the proxy, all clients share one counter. The startup warning only checks the `FORWARDED_ALLOW_IPS` environment variable, not uvicorn's `--forwarded-allow-ips` option.
 
-Fief ignores `X-Forwarded-Host` by default and uses the `Host` header, which both proxies above pass through unchanged. To take `X-Forwarded-Host` into account, set `X_FORWARDED_HOST_ENABLED=1`: the header then replaces `Host` when the client address, as resolved by uvicorn, is in `FORWARDED_ALLOW_IPS`. Only enable it if your proxy sets or removes this header. Links in emails and in the OpenID configuration always use `FIEF_DOMAIN`.
+Fief ignores `X-Forwarded-Host` by default and uses the `Host` header, which both proxies above pass through unchanged. To take `X-Forwarded-Host` into account, set `X_FORWARDED_HOST_ENABLED=1`: the header then replaces `Host` when the client address, **as resolved by uvicorn**, is in `FORWARDED_ALLOW_IPS`. With a proxy network there, this applies to requests without `X-Forwarded-For` and to clients inside that network, not to external clients behind the proxy. Only enable it if your proxy sets or removes this header. Links in emails and in the OpenID configuration always use `FIEF_DOMAIN`.
 
 ## License
 

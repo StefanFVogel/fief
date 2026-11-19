@@ -8,10 +8,10 @@ class TrustedHosts:
     """
 
     def __init__(self, trusted_hosts: str | list[str]) -> None:
+        self.always_trust = trusted_hosts in ("*", ["*"])
         if isinstance(trusted_hosts, str):
             trusted_hosts = [item.strip() for item in trusted_hosts.split(",")]
 
-        self.always_trust = trusted_hosts == ["*"]
         self.literals: set[str] = set()
         self.addresses: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
         self.networks: set[ipaddress.IPv4Network | ipaddress.IPv6Network] = set()
